@@ -91,11 +91,11 @@ const modals = {
   config: $("modalConfig"),
 };
 function closeAllModals(){
-  backdrop.hidden = true;
+  if (backdrop) backdrop.hidden = true;
   Object.values(modals).forEach(m => m.hidden = true);
 }
 function openModal(which){
-  backdrop.hidden = false;
+  if (backdrop) backdrop.hidden = false;
   modals[which].hidden = false;
 }
 document.addEventListener("click", (e)=>{
