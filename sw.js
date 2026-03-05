@@ -1,11 +1,13 @@
-const CACHE = "lopes-sm-cache-v4.0";
-const ASSETS = [
+// ===== Lopes Serviços Mecânicos - Service Worker =====
+const CACHE = "lopes-sm-cache-v4.1";
+
+// Arquivos "core" que queremos garantir (offline + update rápido)
+const CORE = [
   "./",
   "./index.html",
-  "./styles.css?v=4.0",
-  "./app.js?v=4.0",
-  "./manifest.json?v=4.0",
-  "./sw.js",
+  "./styles.css?v=4.1",
+  "./app.js?v=4.1",
+  "./manifest.json?v=4.1",
   "./assets/logo.png",
   "./assets/icon-192.png",
   "./assets/icon-512.png"
@@ -14,7 +16,7 @@ const ASSETS = [
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches.open(CACHE)
-      .then((cache) => cache.addAll(ASSETS))
+      .then((cache) => cache.addAll(CORE))
       .then(() => self.skipWaiting())
   );
 });
@@ -27,14 +29,18 @@ self.addEventListener("activate", (event) => {
   );
 });
 
-function isCore(url){
+// Detecta arquivos principais (mesmo com querystring ?v=)
+function isCoreRequest(url){
+  if(url.origin !== self.location.origin) return false;
+  const p = url.pathname;
+
   return (
-    url.origin === self.location.origin &&
-    (url.pathname.endsWith("/app.js") ||
-     url.pathname.endsWith("/styles.css") ||
-     url.pathname.endsWith("/index.html") ||
-     url.pathname.endsWith("/manifest.json") ||
-     url.pathname.endsWith("/sw.js"))
+    p.endsWith("/") ||
+    p.endsWith("/index.html") ||
+    p.endsWith("/app.js") ||
+    p.endsWith("/styles.css") ||
+    p.endsWith("/manifest.json") ||
+    p.endsWith("/sw.js")
   );
 }
 
@@ -44,8 +50,26 @@ self.addEventListener("fetch", (event) => {
 
   const url = new URL(req.url);
 
-  // network-first for core files (so updates chegam rápido)
-  if (isCore(url)) {
+  // 1) Navegação (abrir o app): NETWORK-FIRST
+  // Isso evita abrir "versão antiga" quando existe internet.
+  if (req.mode === "navigate") {
+    event.respondWith(
+      fetch(req)
+        .then((res) => {
+          const copy = res.clone();
+          caches.open(CACHE).then((c) => c.put("./index.html", copy)).catch(() => {});
+          return res;
+        })
+        .catch(async () => {
+          const cached = await caches.match("./index.html");
+          return cached || caches.match("./") || new Response("Offline", { status: 503 });
+        })
+    );
+    return;
+  }
+
+  // 2) Arquivos core: NETWORK-FIRST (atualiza rápido)
+  if (isCoreRequest(url)) {
     event.respondWith(
       fetch(req)
         .then((res) => {
@@ -58,12 +82,16 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // cache-first for everything else
+  // 3) Demais arquivos: CACHE-FIRST (rápido e funciona offline)
   event.respondWith(
-    caches.match(req).then((cached) => cached || fetch(req).then((res) => {
-      const copy = res.clone();
-      caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
-      return res;
-    }))
+    caches.match(req).then((cached) => {
+      if (cached) return cached;
+
+      return fetch(req).then((res) => {
+        const copy = res.clone();
+        caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
+        return res;
+      });
+    })
   );
 });
