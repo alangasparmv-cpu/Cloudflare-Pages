@@ -1,4 +1,3 @@
-
 /* Lopes Serviços Mecânicos - PWA Offline + Sync Supabase (single table app_state)
    NÃO salva senha. Login Supabase via email/senha (Auth).
 */
@@ -90,14 +89,32 @@ const modals = {
   service: $("modalService"),
   config: $("modalConfig"),
 };
+
+// ✅ FIX: força fechar mesmo se CSS estiver forçando display
 function closeAllModals(){
-  backdrop.hidden = true;
-  Object.values(modals).forEach(m => m.hidden = true);
+  if (backdrop){
+    backdrop.hidden = true;
+    backdrop.style.display = "none";
+  }
+  Object.values(modals).forEach(m => {
+    if(!m) return;
+    m.hidden = true;
+    m.style.display = "none";
+  });
 }
+
+// ✅ FIX: abre forçando display também
 function openModal(which){
-  backdrop.hidden = false;
-  modals[which].hidden = false;
+  if (backdrop){
+    backdrop.hidden = false;
+    backdrop.style.display = "block";
+  }
+  const m = modals[which];
+  if(!m) return;
+  m.hidden = false;
+  m.style.display = "block";
 }
+
 document.addEventListener("click", (e)=>{
   const t = e.target;
   // Click outside (backdrop) closes
@@ -635,7 +652,8 @@ function labelTipo(t){
 function escapeHtml(str){
   return (str||"").toString()
     .replaceAll("&","&amp;").replaceAll("<","&lt;")
-    .replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;");
+    .replaceAll(">","&gt;").replaceAll('"',"&quot;")
+    .replaceAll("'","&#039;");
 }
 
 /* Config + PIN */
@@ -813,10 +831,19 @@ async function initAuthState(){
 }
 
 window.addEventListener("load", ()=>{
+  // ✅ garante que nenhum modal inicia aberto (mesmo se CSS estiver forçando)
+  closeAllModals();
+
+  // ✅ remove qualquer hash (#...) que possa puxar pra config/alguma seção
+  if (location.hash) {
+    history.replaceState(null, "", location.pathname + location.search);
+  }
+
   // register sw
   if("serviceWorker" in navigator){
     navigator.serviceWorker.register("./sw.js").catch(()=>{});
   }
+
   // pin gate (simple)
   const pin = localStorage.getItem(APP.pinKey) || "1234";
   setTimeout(()=>{
