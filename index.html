@@ -8,6 +8,19 @@
   <link rel="icon" href="assets/icon-192.png" />
   <title>Lopes Serviços Mecânicos</title>
   <link rel="stylesheet" href="styles.css" />
+
+  <!-- ✅ GARANTE que hidden sempre oculta (corrige modal abrindo sozinho / não fechando) -->
+  <style>
+    [hidden] { display: none !important; }
+  </style>
+
+  <!-- ✅ Remove qualquer #hash que possa puxar para Config/alguma seção -->
+  <script>
+    if (location.hash) {
+      history.replaceState(null, "", location.pathname + location.search);
+    }
+  </script>
+
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script defer src="app.js"></script>
 </head>
@@ -21,8 +34,8 @@
       </div>
     </div>
     <div class="top-actions">
-      <button class="btn ghost" id="btnSync" title="Sincronizar">☁️</button>
-      <button class="btn ghost" id="btnConfig" title="Configurações">⚙️</button>
+      <button class="btn ghost" id="btnSync" title="Sincronizar" type="button">☁️</button>
+      <button class="btn ghost" id="btnConfig" title="Configurações" type="button">⚙️</button>
     </div>
   </header>
 
@@ -30,7 +43,7 @@
     <section class="card search">
       <div class="row">
         <input id="q" class="input" placeholder="Buscar por placa, cliente ou telefone…" />
-        <button id="btnNewOS" class="btn primary">Nova OS</button>
+        <button id="btnNewOS" class="btn primary" type="button">Nova OS</button>
       </div>
       <div class="chips" id="quickChips"></div>
     </section>
@@ -39,7 +52,7 @@
       <section class="card">
         <div class="card-h">
           <h2>Clientes</h2>
-          <button class="btn" id="btnNewClient">+ Cliente</button>
+          <button class="btn" id="btnNewClient" type="button">+ Cliente</button>
         </div>
         <div id="clientsList" class="list"></div>
       </section>
@@ -47,7 +60,7 @@
       <section class="card">
         <div class="card-h">
           <h2>Veículos</h2>
-          <button class="btn" id="btnNewVehicle">+ Veículo</button>
+          <button class="btn" id="btnNewVehicle" type="button">+ Veículo</button>
         </div>
         <div id="vehiclesList" class="list"></div>
       </section>
@@ -68,7 +81,7 @@
   <div class="modal-card" id="modalClient" hidden>
     <div class="modal-h">
       <h3 id="clientTitle">Cliente</h3>
-      <button class="btn ghost" data-close>✕</button>
+      <button class="btn ghost" data-close type="button">✕</button>
     </div>
     <div class="modal-b">
       <div class="form">
@@ -81,17 +94,17 @@
       </div>
     </div>
     <div class="modal-f">
-      <button class="btn danger" id="clientDelete">Excluir</button>
+      <button class="btn danger" id="clientDelete" type="button">Excluir</button>
       <div class="spacer"></div>
-      <button class="btn" data-close>Cancelar</button>
-      <button class="btn primary" id="clientSave">Salvar</button>
+      <button class="btn" data-close type="button">Cancelar</button>
+      <button class="btn primary" id="clientSave" type="button">Salvar</button>
     </div>
   </div>
 
   <div class="modal-card" id="modalVehicle" hidden>
     <div class="modal-h">
       <h3 id="vehicleTitle">Veículo</h3>
-      <button class="btn ghost" data-close>✕</button>
+      <button class="btn ghost" data-close type="button">✕</button>
     </div>
     <div class="modal-b">
       <div class="form">
@@ -110,17 +123,17 @@
       </div>
     </div>
     <div class="modal-f">
-      <button class="btn danger" id="vehicleDelete">Excluir</button>
+      <button class="btn danger" id="vehicleDelete" type="button">Excluir</button>
       <div class="spacer"></div>
-      <button class="btn" data-close>Cancelar</button>
-      <button class="btn primary" id="vehicleSave">Salvar</button>
+      <button class="btn" data-close type="button">Cancelar</button>
+      <button class="btn primary" id="vehicleSave" type="button">Salvar</button>
     </div>
   </div>
 
   <div class="modal-card" id="modalService" hidden>
     <div class="modal-h">
       <h3 id="serviceTitle">Ordem de Serviço</h3>
-      <button class="btn ghost" data-close>✕</button>
+      <button class="btn ghost" data-close type="button">✕</button>
     </div>
     <div class="modal-b">
       <div class="form two">
@@ -200,25 +213,25 @@
 
         <div class="full">
           <div class="row">
-            <button class="btn" id="btnPrint">Imprimir / PDF</button>
-            <button class="btn" id="btnWhats">WhatsApp</button>
+            <button class="btn" id="btnPrint" type="button">Imprimir / PDF</button>
+            <button class="btn" id="btnWhats" type="button">WhatsApp</button>
             <div class="spacer"></div>
-            <button class="btn danger" id="serviceDelete">Excluir</button>
+            <button class="btn danger" id="serviceDelete" type="button">Excluir</button>
           </div>
         </div>
 
       </div>
     </div>
     <div class="modal-f">
-      <button class="btn" data-close>Fechar</button>
-      <button class="btn primary" id="serviceSave">Salvar OS</button>
+      <button class="btn" data-close type="button">Fechar</button>
+      <button class="btn primary" id="serviceSave" type="button">Salvar OS</button>
     </div>
   </div>
 
   <div class="modal-card" id="modalConfig" hidden>
     <div class="modal-h">
       <h3>Configurações</h3>
-      <button class="btn ghost" data-close>✕</button>
+      <button class="btn ghost" data-close type="button">✕</button>
     </div>
     <div class="modal-b">
       <div class="form">
@@ -227,7 +240,7 @@
           <div class="row">
             <input id="pinOld" class="input" type="password" placeholder="PIN atual" />
             <input id="pinNew" class="input" type="password" placeholder="Novo PIN" />
-            <button id="btnPin" class="btn">Alterar</button>
+            <button id="btnPin" class="btn" type="button">Alterar</button>
           </div>
           <div class="muted">Padrão: 1234</div>
         </div>
@@ -237,11 +250,11 @@
           <div class="row">
             <input id="cloudEmail" class="input" type="email" placeholder="E-mail" />
             <input id="cloudPass" class="input" type="password" placeholder="Senha" />
-            <button id="btnCloudLogin" class="btn primary">Entrar</button>
+            <button id="btnCloudLogin" class="btn primary" type="button">Entrar</button>
           </div>
           <div class="row">
-            <button id="btnCloudLogout" class="btn">Sair</button>
-            <button id="btnCloudSync" class="btn">Sincronizar agora</button>
+            <button id="btnCloudLogout" class="btn" type="button">Sair</button>
+            <button id="btnCloudSync" class="btn" type="button">Sincronizar agora</button>
             <div class="spacer"></div>
             <span class="pill" id="cloudStatus">Offline</span>
           </div>
@@ -251,18 +264,18 @@
         <div class="block">
           <div class="block-h">Backup local</div>
           <div class="row">
-            <button id="btnExport" class="btn">Exportar JSON</button>
+            <button id="btnExport" class="btn" type="button">Exportar JSON</button>
             <label class="btn">
               Importar JSON<input id="importFile" type="file" accept="application/json" hidden />
             </label>
-            <button id="btnWipe" class="btn danger">Zerar tudo</button>
+            <button id="btnWipe" class="btn danger" type="button">Zerar tudo</button>
           </div>
         </div>
 
       </div>
     </div>
     <div class="modal-f">
-      <button class="btn" data-close>Fechar</button>
+      <button class="btn" data-close type="button">Fechar</button>
     </div>
   </div>
 
