@@ -813,7 +813,10 @@ async function initAuthState(){
 }
 
 window.addEventListener("load", ()=>{
-  // service worker disabled for debugging Supabase connection
+closeAllModals();
+  history.replaceState(null, "", location.pathname + location.search);
+  window.scrollTo(0, 0);
+   // service worker disabled for debugging Supabase connection
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.getRegistrations()
     .then((regs)=>Promise.all(regs.map(r=>r.unregister())))
