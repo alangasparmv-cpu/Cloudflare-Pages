@@ -1,3 +1,6 @@
+/* Fix: garantir que atributo hidden funcione mesmo com display flex */
+[hidden]{display:none !important;}
+
 
 :root{
   --bg:#0b0b0d;
