@@ -2,9 +2,9 @@ const CACHE = "lopes-sm-cache-v2.2";
 const ASSETS = [
   "./",
   "./index.html",
-  "./styles.css?v=2.2",
-  "./app.js?v=2.2",
-  "./manifest.json?v=2.2",
+  "./styles.css?v=2.5",
+  "./app.js?v=2.5",
+  "./manifest.json?v=2.5",
   "./assets/logo-192.png",
   "./assets/logo-512.png"
 ];
