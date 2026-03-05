@@ -1079,6 +1079,10 @@ async function initAuthState(){
 }
 
 window.addEventListener("load", ()=>{
+
+  // garante que nenhum modal fique aberto após reload
+  if (typeof closeAllModals === "function") closeAllModals();
+
   // service worker disabled for debugging Supabase connection
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.getRegistrations()
