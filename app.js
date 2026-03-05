@@ -1083,6 +1083,17 @@ window.addEventListener("load", ()=>{
   // garante que nenhum modal fique aberto após reload
   if (typeof closeAllModals === "function") closeAllModals();
 
+  // ✅ binding defensivo (garante que botões críticos funcionem mesmo se algum handler falhar)
+  const _btnNewOS = document.getElementById("btnNewOS");
+  if (_btnNewOS){
+    _btnNewOS.addEventListener("click", (e)=>{
+      e.preventDefault();
+      e.stopPropagation();
+      try{ openService(null); }catch(err){ console.error(err); }
+    }, { passive:false });
+  }
+
+
   // service worker disabled for debugging Supabase connection
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.getRegistrations()

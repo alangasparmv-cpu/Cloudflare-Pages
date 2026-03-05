@@ -1,12 +1,12 @@
-const CACHE = "lopes-sm-cache-v3.0";
+const CACHE = "lopes-sm-cache-v3.1.1";
 const ASSETS = [
   "./",
   "./index.html",
-  "./styles.css?v=3.0",
-  "./app.js?v=3.0",
-  "./manifest.json?v=3.0",
-  "./assets/logo-192.png",
-  "./assets/logo-512.png"
+  "./styles.css?v=3.1.1",
+  "./app.js?v=3.1.1",
+  "./manifest.json?v=3.1.1",
+  "./assets/icon-192.png",
+  "./assets/icon-512.png"
 ];
 
 self.addEventListener("install", (event) => {
