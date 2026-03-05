@@ -1,6 +1,6 @@
-
 /* Lopes Serviços Mecânicos - PWA Offline + Sync Supabase (single table app_state)
-   NÃO salva senha. Login Supabase via email/senha (Auth).
+   NÃO salva senha do Supabase no banco. Login Supabase via email/senha (Auth).
+   Auto-sync: ao salvar + a cada X segundos + ao voltar pro app.
 */
 const APP = {
   supabaseUrl: "https://euoetxrcwzkogtdbuiqj.supabase.co",
@@ -23,45 +23,38 @@ function addMonths(dateISO, months){
   const d = new Date(dateISO + "T00:00:00");
   const day = d.getDate();
   d.setMonth(d.getMonth() + Number(months||0));
-  // keep day stable if possible
   if(d.getDate() !== day) d.setDate(0);
   return d.toISOString().slice(0,10);
 }
 
 function loadState(){
   const raw = localStorage.getItem(APP.storageKey);
-  if(!raw){
-    return {
-      version: "1.2",
-      updated_at: new Date().toISOString(),
-      counters: { os: 1 },
-      clients: [],
-      vehicles: [],
-      services: [],
-      cash: [],
-      settings: { rememberEmail: true, rememberPass: false }
-    };
-  }
+  const base = {
+    version: "1.2",
+    updated_at: new Date().toISOString(),
+    counters: { os: 1 },
+    clients: [],
+    vehicles: [],
+    services: [],
+    cash: [],
+    settings: { rememberEmail: true, rememberPass: true }
+  };
+  if(!raw) return base;
   try{
-    return JSON.parse(raw);
+    const data = JSON.parse(raw);
+    // garante campos novos
+    data.counters = data.counters || { os: 1 };
+    data.clients = data.clients || [];
+    data.vehicles = data.vehicles || [];
+    data.services = data.services || [];
+    data.cash = data.cash || [];
+    data.settings = data.settings || { rememberEmail: true, rememberPass: true };
+    data.updated_at = data.updated_at || new Date().toISOString();
+    data.version = data.version || "1.2";
+    return data;
   }catch{
-    return {
-      version: "1.2",
-      updated_at: new Date().toISOString(),
-      counters: { os: 1 },
-      clients: [],
-      vehicles: [],
-      services: [],
-      cash: [],
-      settings: { rememberEmail: true, rememberPass: false }
-    };
+    return base;
   }
-}
-
-function saveState(){
-  state.updated_at = new Date().toISOString();
-  localStorage.setItem(APP.storageKey, JSON.stringify(state));
-  renderAll();
 }
 
 let state = loadState();
@@ -69,6 +62,18 @@ let state = loadState();
 // Supabase client (loaded via CDN)
 let supabaseClient = null;
 let session = null;
+
+/* ===== Auto Sync control ===== */
+let dirtySinceLastSync = false;
+let syncTimer = null;
+let syncInFlight = false;
+let syncQueued = false;
+let syncDebounceTimer = null;
+
+// interval padrão (visível): 30s
+const SYNC_INTERVAL_VISIBLE_MS = 30000;
+// intervalo quando app fica oculto: 2 min
+const SYNC_INTERVAL_HIDDEN_MS = 120000;
 
 function toast(msg){
   const el = document.createElement("div");
@@ -102,25 +107,104 @@ const modals = {
 };
 function closeAllModals(){
   if (backdrop) backdrop.hidden = true;
-  Object.values(modals).forEach(m => m.hidden = true);
+  Object.values(modals).forEach(m => { if(m) m.hidden = true; });
 }
 function openModal(which){
   if (backdrop) backdrop.hidden = false;
-  modals[which].hidden = false;
+  if(modals[which]) modals[which].hidden = false;
 }
 document.addEventListener("click", (e)=>{
   const t = e.target;
-  // Click outside (backdrop) closes
   if(t === backdrop) return closeAllModals();
-  // Any element inside a button/link with data-close should close (handles clicks on icons/spans)
   const closeEl = t && t.closest ? t.closest("[data-close]") : null;
   if(closeEl) return closeAllModals();
 });
 
-/* Render */
+function escapeHtml(str){
+  return (str||"").toString()
+    .replaceAll("&","&amp;").replaceAll("<","&lt;")
+    .replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;");
+}
+
 function matchesQuery(obj, q){
   const hay = JSON.stringify(obj).toLowerCase();
   return hay.includes(q.toLowerCase());
+}
+
+/* ===== Persistência local ===== */
+function saveState({ sync = true } = {}){
+  state.updated_at = new Date().toISOString();
+  localStorage.setItem(APP.storageKey, JSON.stringify(state));
+  dirtySinceLastSync = true;
+  renderAll();
+
+  // se estiver conectado, tenta sincronizar (debounce)
+  if(sync) scheduleAutoSync("saveState");
+}
+
+/* ===== Sync helpers ===== */
+function scheduleAutoSync(reason){
+  // só agenda se estiver logado e online
+  if(!session || !navigator.onLine) return;
+
+  // debounce de 900ms pra não disparar várias vezes seguidas
+  if(syncDebounceTimer) clearTimeout(syncDebounceTimer);
+  syncDebounceTimer = setTimeout(()=>{
+    cloudSyncSafe(reason).catch(()=>{});
+  }, 900);
+}
+
+async function cloudSyncSafe(reason){
+  if(syncInFlight){
+    syncQueued = true;
+    return;
+  }
+  syncInFlight = true;
+  try{
+    await cloudSync();
+    dirtySinceLastSync = false;
+  }catch(err){
+    // falha silenciosa (não spammar toast)
+    // se quiser ver o erro: console.warn(err)
+  }finally{
+    syncInFlight = false;
+    if(syncQueued){
+      syncQueued = false;
+      // tenta novamente logo depois
+      setTimeout(()=> cloudSyncSafe("queued").catch(()=>{}), 800);
+    }
+  }
+}
+
+function restartAutoSyncTimer(){
+  if(syncTimer) clearInterval(syncTimer);
+  const ms = document.hidden ? SYNC_INTERVAL_HIDDEN_MS : SYNC_INTERVAL_VISIBLE_MS;
+  syncTimer = setInterval(()=>{
+    if(session && navigator.onLine){
+      // se não mudou nada, ainda assim puxa do remoto (pega atualizações do PC/celular)
+      cloudSyncSafe("interval").catch(()=>{});
+    }
+  }, ms);
+}
+
+function labelTipo(t){
+  const m = {
+    troca_oleo:"Troca de óleo",
+    revisao:"Revisão",
+    freios:"Freios",
+    suspensao:"Suspensão",
+    arrefecimento:"Arrefecimento",
+    eletrica:"Elétrica",
+    pneus:"Pneus",
+    alinhamento_balanceamento:"Alinhamento/Balanceamento",
+    outro:"Outro"
+  };
+  return m[t] || t || "";
+}
+
+function labelPay(m){
+  const map = {pix:"Pix", dinheiro:"Dinheiro", debito:"Débito", credito:"Crédito", boleto:"Boleto", outro:"Outro"};
+  return map[m] || (m||"");
 }
 
 function dueBadgeForOil(service){
@@ -136,7 +220,6 @@ function dueBadgeForOil(service){
     if(diffDays <= 0) due = true;
     else if(diffDays <= 14) warn = true;
   }
-  // km compare with current vehicle km if available
   const v = state.vehicles.find(v=>v.id===service.veiculo_id);
   if(v && km != null && Number(v.km_atual||0) >= Number(km)) due = true;
   else if(v && km != null && Number(km) - Number(v.km_atual||0) <= 300) warn = true;
@@ -146,9 +229,11 @@ function dueBadgeForOil(service){
   return {cls:"ok", txt:"Em dia"};
 }
 
+/* ===== Render ===== */
 function renderClients(){
-  const q = norm($("q").value);
+  const q = norm($("q")?.value);
   const list = $("clientsList");
+  if(!list) return;
   list.innerHTML = "";
   let items = state.clients.slice().sort((a,b)=> (a.nome||"").localeCompare(b.nome||""));
   if(q) items = items.filter(x=> matchesQuery(x,q));
@@ -172,8 +257,9 @@ function renderClients(){
 }
 
 function renderVehicles(){
-  const q = norm($("q").value);
+  const q = norm($("q")?.value);
   const list = $("vehiclesList");
+  if(!list) return;
   list.innerHTML = "";
   let items = state.vehicles.slice().sort((a,b)=> (a.placa||"").localeCompare(b.placa||""));
   if(q) items = items.filter(x=> matchesQuery(x,q));
@@ -198,8 +284,9 @@ function renderVehicles(){
 }
 
 function renderServices(){
-  const q = norm($("q").value);
+  const q = norm($("q")?.value);
   const list = $("servicesList");
+  if(!list) return;
   list.innerHTML = "";
   let items = state.services.slice().sort((a,b)=> (b.created_at||"").localeCompare(a.created_at||""));
   if(q) items = items.filter(x=> matchesQuery(x,q));
@@ -232,6 +319,7 @@ function renderServices(){
 
 function renderChips(){
   const wrap = $("quickChips");
+  if(!wrap) return;
   const due = state.services.filter(s=> s.tipo==="troca_oleo" && dueBadgeForOil(s)?.cls==="red").length;
   const near = state.services.filter(s=> s.tipo==="troca_oleo" && dueBadgeForOil(s)?.cls==="warn").length;
   wrap.innerHTML = `
@@ -243,7 +331,7 @@ function renderChips(){
     ch.onclick = ()=>{
       const type = ch.getAttribute("data-chip");
       if(type==="all"){ $("q").value=""; renderAll(); return; }
-      if(type==="due"){ $("q").value="\"troca_oleo\""; } // weak filter
+      if(type==="due"){ $("q").value="\"troca_oleo\""; }
       if(type==="near"){ $("q").value="troca_oleo"; }
       renderAll();
     };
@@ -259,7 +347,7 @@ function renderAll(){
   refreshCloudStatus();
 }
 
-/* CRUD - Client */
+/* ===== CRUD - Cliente ===== */
 let editingClientId = null;
 function openClient(id){
   editingClientId = id;
@@ -271,8 +359,10 @@ function openClient(id){
   $("clientDelete").style.display = c ? "inline-block":"none";
   openModal("client");
 }
-$("btnNewClient").onclick = ()=> openClient(null);
-$("clientSave").onclick = ()=>{
+
+$("btnNewClient")?.addEventListener("click", ()=> openClient(null));
+
+$("clientSave")?.addEventListener("click", ()=>{
   const nome = norm($("clientNome").value);
   const whats = norm($("clientWhats").value).replace(/\D/g,"");
   const obs = norm($("clientObs").value);
@@ -285,18 +375,18 @@ $("clientSave").onclick = ()=>{
   }
   saveState();
   closeAllModals();
-};
-$("clientDelete").onclick = ()=>{
+});
+
+$("clientDelete")?.addEventListener("click", ()=>{
   if(!editingClientId) return;
   if(!confirm("Excluir cliente?")) return;
-  // Keep vehicles but detach
   state.vehicles.forEach(v=>{ if(v.cliente_id===editingClientId) v.cliente_id=null; });
   state.clients = state.clients.filter(c=>c.id!==editingClientId);
   saveState();
   closeAllModals();
-};
+});
 
-/* CRUD - Vehicle */
+/* ===== CRUD - Veículo ===== */
 let editingVehicleId = null;
 function openVehicle(id){
   editingVehicleId = id;
@@ -312,8 +402,9 @@ function openVehicle(id){
   $("vehicleDelete").style.display = v ? "inline-block":"none";
   openModal("vehicle");
 }
-$("btnNewVehicle").onclick = ()=> openVehicle(null);
-$("vehicleSave").onclick = ()=>{
+$("btnNewVehicle")?.addEventListener("click", ()=> openVehicle(null));
+
+$("vehicleSave")?.addEventListener("click", ()=>{
   const cliente_id = $("vehicleCliente").value || null;
   const placa = normPlaca($("vehiclePlaca").value);
   const marca = norm($("vehicleMarca").value);
@@ -322,7 +413,7 @@ $("vehicleSave").onclick = ()=>{
   const km_atual = Number($("vehicleKm").value || 0);
   const obs = norm($("vehicleObs").value);
   if(!placa){ toast("Informe a placa."); return; }
-  // unique by placa
+
   const exists = state.vehicles.find(x=> x.placa===placa && x.id!==editingVehicleId);
   if(exists){ toast("Já existe um veículo com essa placa."); return; }
 
@@ -334,26 +425,74 @@ $("vehicleSave").onclick = ()=>{
   }
   saveState();
   closeAllModals();
-};
-$("vehicleDelete").onclick = ()=>{
+});
+
+$("vehicleDelete")?.addEventListener("click", ()=>{
   if(!editingVehicleId) return;
   if(!confirm("Excluir veículo? As OS deste veículo também serão removidas.")) return;
   state.services = state.services.filter(s=>s.veiculo_id!==editingVehicleId);
   state.vehicles = state.vehicles.filter(v=>v.id!==editingVehicleId);
   saveState();
   closeAllModals();
-};
+});
 
-/* OS */
+/* ===== OS ===== */
 let editingServiceId = null;
+
 function nextOsNumber(){
   const n = state.counters?.os || 1;
   state.counters.os = n + 1;
   return String(n).padStart(6,"0");
 }
+
+function onOilIntervalChange(){
+  const v = $("oilKmInterval")?.value;
+  if($("oilKmCustom")) $("oilKmCustom").hidden = v !== "custom";
+}
+function toggleOilBlock(){
+  if(!$("oilBlock") || !$("osTipo")) return;
+  $("oilBlock").style.display = $("osTipo").value === "troca_oleo" ? "block":"none";
+}
+function previewOil(){
+  if(!$("osTipo") || $("osTipo").value !== "troca_oleo"){ if($("oilPreview")) $("oilPreview").textContent=""; return; }
+  const kmServico = Number($("osKm").value||0);
+  const dateServico = $("osData").value || todayISO();
+  let kmInt = $("oilKmInterval").value;
+  if(kmInt==="custom") kmInt = Number($("oilKmCustom").value||0);
+  else kmInt = Number(kmInt);
+  const months = Number($("oilMonths").value||6);
+  const nextKm = kmServico && kmInt ? (kmServico + kmInt) : null;
+  const nextDate = addMonths(dateServico, months);
+  if($("oilPreview")) $("oilPreview").textContent = `Próxima troca: ${fmtDate(nextDate)} ou ${nextKm ? (nextKm+" km") : "—"} (o que vencer primeiro).`;
+}
+
+// Pagamento: info de troco e recebido
+function updatePayInfo(){
+  const info = $("osPayInfo");
+  if(!info) return;
+  const total = Number($("osTotal")?.value || 0);
+  const recv = Number($("osPayAmount")?.value || 0);
+  const change = Number($("osPayChange")?.value || 0);
+  if(!recv && !change){
+    info.textContent = "";
+    return;
+  }
+  const diff = (recv - total - change);
+  info.textContent = `Total: ${money(total)} • Recebido: ${money(recv)} • Troco: ${money(change)} • Dif: ${money(diff)}`;
+}
+
+function filterVehiclesForOs(){
+  const sel = $("osVeiculo");
+  const cid = $("osCliente")?.value;
+  if(!sel) return;
+  const all = state.vehicles.filter(v=> !cid || v.cliente_id===cid);
+  sel.innerHTML = `<option value="">Selecione…</option>` + all.map(v=> `<option value="${v.id}">${escapeHtml(v.placa)} — ${escapeHtml(v.modelo||"")}</option>`).join("");
+}
+
 function openService(id){
   editingServiceId = id;
   const s = state.services.find(x=>x.id===id);
+
   $("serviceTitle").textContent = s ? "Editar OS" : "Nova OS";
   $("osData").value = s?.data_servico || todayISO();
   $("osKm").value = s?.km_servico ?? "";
@@ -363,20 +502,19 @@ function openService(id){
   $("osNumero").value = s?.os_numero || (s? "": nextOsNumber());
 
   // pagamento
-  $("osPaid").checked = !!s?.paid;
-  $("osPayMethod").value = s?.pay_method || "pix";
-  $("osPayAmount").value = s?.pay_amount ?? "";
-  $("osPayChange").value = s?.pay_change ?? "";
+  if($("osPaid")) $("osPaid").checked = !!s?.paid;
+  if($("osPayMethod")) $("osPayMethod").value = s?.pay_method || "pix";
+  if($("osPayAmount")) $("osPayAmount").value = s?.pay_amount ?? "";
+  if($("osPayChange")) $("osPayChange").value = s?.pay_change ?? "";
   updatePayInfo();
 
   $("osCliente").value = s?.cliente_id || "";
-  // vehicles list depends on client; set after refreshSelects
   setTimeout(()=>{
     filterVehiclesForOs();
     $("osVeiculo").value = s?.veiculo_id || "";
   },0);
 
-  // oil params
+  // óleo
   $("oilKmInterval").value = s?.oil_km_interval || "10000";
   $("oilKmCustom").value = s?.oil_km_custom || "";
   $("oilMonths").value = s?.oil_months || 6;
@@ -388,45 +526,23 @@ function openService(id){
   $("serviceDelete").style.display = s ? "inline-block":"none";
   openModal("service");
 }
-$("btnNewOS").onclick = ()=> openService(null);
 
-$("osCliente").onchange = ()=> filterVehiclesForOs();
-$("osTipo").onchange = ()=> { toggleOilBlock(); previewOil(); };
+$("btnNewOS")?.addEventListener("click", ()=> openService(null));
 
-function filterVehiclesForOs(){
-  const cid = $("osCliente").value;
-  const sel = $("osVeiculo");
-  const all = state.vehicles.filter(v=> !cid || v.cliente_id===cid);
-  sel.innerHTML = `<option value="">Selecione…</option>` + all.map(v=> `<option value="${v.id}">${escapeHtml(v.placa)} — ${escapeHtml(v.modelo||"")}</option>`).join("");
-}
+$("osCliente")?.addEventListener("change", filterVehiclesForOs);
+$("osTipo")?.addEventListener("change", ()=> { toggleOilBlock(); previewOil(); });
 
-$("oilKmInterval").onchange = ()=> { onOilIntervalChange(); previewOil(); };
-$("oilKmCustom").oninput = ()=> previewOil();
-$("oilMonths").oninput = ()=> previewOil();
-$("osData").onchange = ()=> previewOil();
-$("osKm").oninput = ()=> previewOil();
+$("oilKmInterval")?.addEventListener("change", ()=> { onOilIntervalChange(); previewOil(); });
+$("oilKmCustom")?.addEventListener("input", previewOil);
+$("oilMonths")?.addEventListener("input", previewOil);
+$("osData")?.addEventListener("change", previewOil);
+$("osKm")?.addEventListener("input", previewOil);
 
-function onOilIntervalChange(){
-  const v = $("oilKmInterval").value;
-  $("oilKmCustom").hidden = v !== "custom";
-}
-function toggleOilBlock(){
-  $("oilBlock").style.display = $("osTipo").value === "troca_oleo" ? "block":"none";
-}
-function previewOil(){
-  if($("osTipo").value !== "troca_oleo"){ $("oilPreview").textContent=""; return; }
-  const kmServico = Number($("osKm").value||0);
-  const dateServico = $("osData").value || todayISO();
-  let kmInt = $("oilKmInterval").value;
-  if(kmInt==="custom") kmInt = Number($("oilKmCustom").value||0);
-  else kmInt = Number(kmInt);
-  const months = Number($("oilMonths").value||6);
-  const nextKm = kmServico && kmInt ? (kmServico + kmInt) : null;
-  const nextDate = addMonths(dateServico, months);
-  $("oilPreview").textContent = `Próxima troca: ${fmtDate(nextDate)} ou ${nextKm ? (nextKm+" km") : "—"} (o que vencer primeiro).`;
-}
+$("osTotal")?.addEventListener("input", updatePayInfo);
+$("osPayAmount")?.addEventListener("input", updatePayInfo);
+$("osPayChange")?.addEventListener("input", updatePayInfo);
 
-$("serviceSave").onclick = ()=>{
+$("serviceSave")?.addEventListener("click", ()=>{
   const cliente_id = $("osCliente").value || null;
   const veiculo_id = $("osVeiculo").value || null;
   const data_servico = $("osData").value || todayISO();
@@ -436,10 +552,10 @@ $("serviceSave").onclick = ()=>{
   const total = Number($("osTotal").value||0);
   const os_numero = norm($("osNumero").value);
 
-  const paid = !!$("osPaid").checked;
-  const pay_method = $("osPayMethod").value;
-  const pay_amount = Number($("osPayAmount").value||0);
-  const pay_change = Number($("osPayChange").value||0);
+  const paid = !!$("osPaid")?.checked;
+  const pay_method = $("osPayMethod")?.value || "pix";
+  const pay_amount = Number($("osPayAmount")?.value||0);
+  const pay_change = Number($("osPayChange")?.value||0);
 
   if(!cliente_id){ toast("Selecione o cliente."); return; }
   if(!veiculo_id){ toast("Selecione o veículo."); return; }
@@ -480,7 +596,7 @@ $("serviceSave").onclick = ()=>{
       updated_at: new Date().toISOString()
     });
   }
-  // update vehicle km if greater
+
   const v = state.vehicles.find(v=>v.id===veiculo_id);
   if(v && km_servico && km_servico > Number(v.km_atual||0)){
     v.km_atual = km_servico;
@@ -489,25 +605,23 @@ $("serviceSave").onclick = ()=>{
 
   saveState();
   closeAllModals();
-  // try quick sync
-  if(session) cloudSync().catch(()=>{});
-};
+  scheduleAutoSync("saveOS");
+});
 
-$("serviceDelete").onclick = ()=>{
+$("serviceDelete")?.addEventListener("click", ()=>{
   if(!editingServiceId) return;
   if(!confirm("Excluir esta OS?")) return;
   state.services = state.services.filter(s=>s.id!==editingServiceId);
   saveState();
   closeAllModals();
-};
-
-$("btnPrint").onclick = ()=> printCurrentOS();
-$("btnWhats").onclick = ()=> sendWhats();
+});
 
 /* Print */
+$("btnPrint")?.addEventListener("click", ()=> printCurrentOS());
+$("btnWhats")?.addEventListener("click", ()=> sendWhats());
+
 function printCurrentOS(){
   const s = editingServiceId ? state.services.find(x=>x.id===editingServiceId) : null;
-  // if new not saved yet: build from form
   const snap = s || {
     cliente_id: $("osCliente").value,
     veiculo_id: $("osVeiculo").value,
@@ -525,6 +639,7 @@ function printCurrentOS(){
   const v = state.vehicles.find(v=>v.id===snap.veiculo_id);
 
   const printArea = $("printArea");
+  if(!printArea) return;
   printArea.hidden = false;
   printArea.innerHTML = `
     <div class="os-page">
@@ -607,19 +722,19 @@ function printCurrentOS(){
 }
 
 function sendWhats(){
-  const cid = $("osCliente").value;
-  const vid = $("osVeiculo").value;
+  const cid = $("osCliente")?.value;
+  const vid = $("osVeiculo")?.value;
   const c = state.clients.find(c=>c.id===cid);
   const v = state.vehicles.find(v=>v.id===vid);
   if(!c?.whatsapp){ toast("Cliente sem WhatsApp cadastrado."); return; }
 
-  const tipo = labelTipo($("osTipo").value);
-  const data = $("osData").value ? fmtDate($("osData").value) : "";
-  const total = money($("osTotal").value||0);
-  let msg = `Olá ${c.nome}! 👋\n\nOS ${$("osNumero").value||""}\nServiço: ${tipo}\nVeículo: ${v?.placa||""} ${v?.modelo||""}\nData: ${data}\nTotal: ${total}\n\nQualquer dúvida, estamos à disposição.\nLopes Serviços Mecânicos`;
-  if($("osTipo").value==="troca_oleo"){
+  const tipo = labelTipo($("osTipo")?.value);
+  const data = $("osData")?.value ? fmtDate($("osData").value) : "";
+  const total = money($("osTotal")?.value||0);
+  let msg = `Olá ${c.nome}! 👋\n\nOS ${$("osNumero")?.value||""}\nServiço: ${tipo}\nVeículo: ${v?.placa||""} ${v?.modelo||""}\nData: ${data}\nTotal: ${total}\n\nQualquer dúvida, estamos à disposição.\nLopes Serviços Mecânicos`;
+  if($("osTipo")?.value==="troca_oleo"){
     previewOil();
-    msg += `\n\nPróxima troca: ${$("oilPreview").textContent.replace("Próxima troca: ","")}`;
+    msg += `\n\nPróxima troca: ${$("oilPreview")?.textContent.replace("Próxima troca: ","")}`;
   }
   const url = `https://wa.me/55${c.whatsapp}?text=${encodeURIComponent(msg)}`;
   window.open(url, "_blank");
@@ -627,47 +742,30 @@ function sendWhats(){
 
 /* Select refresh */
 function refreshSelects(){
-  // vehicle modal client list
   const selC = $("vehicleCliente");
-  const cur = selC.value;
-  selC.innerHTML = `<option value="">(Sem cliente)</option>` + state.clients
-    .slice().sort((a,b)=>(a.nome||"").localeCompare(b.nome||""))
-    .map(c=> `<option value="${c.id}">${escapeHtml(c.nome)}</option>`).join("");
-  selC.value = cur || "";
+  if(selC){
+    const cur = selC.value;
+    selC.innerHTML = `<option value="">(Sem cliente)</option>` + state.clients
+      .slice().sort((a,b)=>(a.nome||"").localeCompare(b.nome||""))
+      .map(c=> `<option value="${c.id}">${escapeHtml(c.nome)}</option>`).join("");
+    selC.value = cur || "";
+  }
 
   const osC = $("osCliente");
-  const osCur = osC.value;
-  osC.innerHTML = `<option value="">Selecione…</option>` + state.clients
-    .slice().sort((a,b)=>(a.nome||"").localeCompare(b.nome||""))
-    .map(c=> `<option value="${c.id}">${escapeHtml(c.nome)}</option>`).join("");
-  osC.value = osCur || "";
+  if(osC){
+    const osCur = osC.value;
+    osC.innerHTML = `<option value="">Selecione…</option>` + state.clients
+      .slice().sort((a,b)=>(a.nome||"").localeCompare(b.nome||""))
+      .map(c=> `<option value="${c.id}">${escapeHtml(c.nome)}</option>`).join("");
+    osC.value = osCur || "";
+  }
   filterVehiclesForOs();
 }
 
-function labelTipo(t){
-  const m = {
-    troca_oleo:"Troca de óleo",
-    revisao:"Revisão",
-    freios:"Freios",
-    suspensao:"Suspensão",
-    arrefecimento:"Arrefecimento",
-    eletrica:"Elétrica",
-    pneus:"Pneus",
-    alinhamento_balanceamento:"Alinhamento/Balanceamento",
-    outro:"Outro"
-  };
-  return m[t] || t || "";
-}
-
-function escapeHtml(str){
-  return (str||"").toString()
-    .replaceAll("&","&amp;").replaceAll("<","&lt;")
-    .replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;");
-}
-
 /* Config + PIN */
-$("btnConfig").onclick = ()=> openModal("config");
-$("btnPin").onclick = ()=>{
+$("btnConfig")?.addEventListener("click", ()=> openModal("config"));
+
+$("btnPin")?.addEventListener("click", ()=>{
   const oldPin = $("pinOld").value || "";
   const newPin = $("pinNew").value || "";
   const cur = localStorage.getItem(APP.pinKey) || "1234";
@@ -676,18 +774,18 @@ $("btnPin").onclick = ()=>{
   localStorage.setItem(APP.pinKey, newPin);
   $("pinOld").value=""; $("pinNew").value="";
   toast("PIN atualizado.");
-};
+});
 
-$("btnExport").onclick = ()=>{
+$("btnExport")?.addEventListener("click", ()=>{
   const blob = new Blob([JSON.stringify(state,null,2)], {type:"application/json"});
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
   a.download = `lopes-backup-${new Date().toISOString().slice(0,10)}.json`;
   a.click();
   URL.revokeObjectURL(a.href);
-};
+});
 
-$("importFile").addEventListener("change", async (e)=>{
+$("importFile")?.addEventListener("change", async (e)=>{
   const file = e.target.files?.[0];
   if(!file) return;
   const text = await file.text();
@@ -695,7 +793,7 @@ $("importFile").addEventListener("change", async (e)=>{
     const data = JSON.parse(text);
     if(!data.clients || !data.vehicles || !data.services) throw new Error("Formato inválido");
     state = data;
-    saveState();
+    saveState({ sync: true });
     toast("Backup importado.");
   }catch(err){
     toast("Falha ao importar: " + err.message);
@@ -704,15 +802,15 @@ $("importFile").addEventListener("change", async (e)=>{
   }
 });
 
-$("btnWipe").onclick = ()=>{
+$("btnWipe")?.addEventListener("click", ()=>{
   if(!confirm("Zerar tudo? Isso apaga clientes, veículos e OS do aparelho.")) return;
   localStorage.removeItem(APP.storageKey);
   state = loadState();
-  saveState();
+  saveState({ sync: true });
   toast("Dados locais zerados.");
-};
+});
 
-/* Cloud / Supabase */
+/* ===== Cloud / Supabase ===== */
 async function ensureSupabaseReady(){
   if(supabaseClient) return supabaseClient;
   const start = Date.now();
@@ -748,34 +846,42 @@ async function cloudSync(){
   const owner_id = session.user.id;
 
   // Pull
-  const { data: rows, error: selErr } = await client.from("app_state").select("*").eq("owner_id", owner_id).limit(1);
+  const { data: rows, error: selErr } = await client
+    .from("app_state")
+    .select("*")
+    .eq("owner_id", owner_id)
+    .limit(1);
+
   if(selErr) throw selErr;
 
   if(rows && rows.length){
     const remote = rows[0];
     const remoteUpdated = new Date(remote.updated_at).getTime();
     const localUpdated = new Date(state.updated_at || 0).getTime();
+
     if(remoteUpdated > localUpdated){
-      // adopt remote
       state = remote.payload;
-      // ensure version
       state.version = state.version || "1.2";
       state.updated_at = remote.updated_at;
+      // garante campos novos
+      state.cash = state.cash || [];
+      state.settings = state.settings || { rememberEmail: true, rememberPass: true };
       localStorage.setItem(APP.storageKey, JSON.stringify(state));
-      toast("Dados baixados da nuvem.");
+      renderAll();
     }
   }
 
   // Push (upsert)
   const payload = state;
-  const { error: upErr } = await client.from("app_state").upsert({
-    owner_id,
-    payload,
-    updated_at: new Date().toISOString()
-  }, { onConflict: "owner_id" });
+  const { error: upErr } = await client
+    .from("app_state")
+    .upsert({
+      owner_id,
+      payload,
+      updated_at: new Date().toISOString()
+    }, { onConflict: "owner_id" });
 
   if(upErr) throw upErr;
-  toast("Sincronizado ✅");
 }
 
 function refreshCloudStatus(){
@@ -786,50 +892,86 @@ function refreshCloudStatus(){
   pill.style.borderColor = session ? "rgba(43,213,118,.35)" : "rgba(255,255,255,.15)";
 }
 
-$("btnCloudLogin").onclick = async ()=>{
+/* Lembrar email/senha (preencher campos) */
+function initRememberCloudCreds(){
+  const emailEl = $("cloudEmail");
+  const passEl = $("cloudPass");
+  if(emailEl){
+    const savedEmail = localStorage.getItem(APP.rememberEmailKey) || "";
+    if(savedEmail) emailEl.value = savedEmail;
+  }
+  if(passEl){
+    const savedPass = localStorage.getItem(APP.rememberPassKey) || "";
+    if(savedPass) passEl.value = savedPass;
+  }
+}
+
+/* Botões nuvem */
+$("btnCloudLogin")?.addEventListener("click", async ()=>{
   try{
     const email = $("cloudEmail").value.trim();
     const pass = $("cloudPass").value;
     if(!email || !pass){ toast("Informe e-mail e senha."); return; }
+
+    // salva para preencher automaticamente depois
+    localStorage.setItem(APP.rememberEmailKey, email);
+    localStorage.setItem(APP.rememberPassKey, pass);
+
     await cloudLogin(email, pass);
-    toast("Conectado ✅");
     refreshCloudStatus();
+
+    // assim que logar, já sincroniza na hora e liga autosync
+    await cloudSyncSafe("login");
+    restartAutoSyncTimer();
+    toast("Conectado ✅ (Auto-sync ligado)");
   }catch(err){
     toast("Erro: " + (err?.message || err));
   }
-};
-$("btnCloudLogout").onclick = async ()=>{
+});
+
+$("btnCloudLogout")?.addEventListener("click", async ()=>{
   try{
     await cloudLogout();
-    toast("Desconectado.");
     refreshCloudStatus();
+    toast("Desconectado.");
   }catch(err){
     toast("Erro: " + (err?.message || err));
   }
-};
-$("btnCloudSync").onclick = async ()=>{
+});
+
+$("btnCloudSync")?.addEventListener("click", async ()=>{
   try{
-    await cloudSync();
+    await cloudSyncSafe("manual");
+    toast("Sincronizado ✅");
   }catch(err){
     toast("Falha sync: " + (err?.message || err));
   }
-};
+});
 
-$("btnSync").onclick = async ()=>{
-  // quick sync button
+$("btnSync")?.addEventListener("click", async ()=>{
   try{
-    await cloudSync();
+    await cloudSyncSafe("quick");
+    toast("Sincronizado ✅");
   }catch(err){
     toast("Falha: " + (err?.message || err));
   }
-};
+});
 
-window.addEventListener("online", refreshCloudStatus);
+window.addEventListener("online", ()=>{
+  refreshCloudStatus();
+  if(session) cloudSyncSafe("online").catch(()=>{});
+});
 window.addEventListener("offline", refreshCloudStatus);
 
-/* Init */
-$("q").addEventListener("input", ()=> renderAll());
+document.addEventListener("visibilitychange", ()=>{
+  // muda intervalo e tenta sincronizar ao voltar
+  restartAutoSyncTimer();
+  if(!document.hidden && session && navigator.onLine){
+    cloudSyncSafe("resume").catch(()=>{});
+  }
+});
 
+/* Init auth (pega sessão existente) */
 async function initAuthState(){
   try{
     const client = await ensureSupabaseReady();
@@ -837,26 +979,14 @@ async function initAuthState(){
     session = data.session;
   }catch{ /* ignore */ }
   refreshCloudStatus();
+  if(session){
+    restartAutoSyncTimer();
+    // puxa atualizações do outro aparelho ao abrir
+    cloudSyncSafe("startup").catch(()=>{});
+  }
 }
-
-
 
 /* ===== Extra features v4.0 ===== */
-
-// Pagamento: info de troco e recebido
-function updatePayInfo(){
-  const total = Number($("osTotal")?.value || 0);
-  const recv = Number($("osPayAmount")?.value || 0);
-  const change = Number($("osPayChange")?.value || 0);
-  const info = $("osPayInfo");
-  if(!info) return;
-  if(!recv && !change){
-    info.textContent = "";
-    return;
-  }
-  const diff = (recv - total - change);
-  info.textContent = `Total: ${money(total)} • Recebido: ${money(recv)} • Troco: ${money(change)} • Dif: ${money(diff)}`;
-}
 
 // Marcas e modelos (base offline - principais do Brasil)
 const VEHICLE_DB = {
@@ -925,8 +1055,9 @@ function wirePlateAutofill(){
   });
 }
 
-/* Caixa */
+/* ===== Caixa ===== */
 let cashTxMode = "in"; // in/out
+
 function cashBalance(){
   const txs = state.cash || [];
   let bal=0;
@@ -936,22 +1067,23 @@ function cashBalance(){
   }
   return bal;
 }
-function openCash(){
-  renderCash();
-  openModal("cash");
-}
+
 function renderCash(){
   const pill = $("cashBalancePill");
   if(pill) pill.textContent = `Saldo: ${money(cashBalance())}`;
+
   const q = norm($("cashQ")?.value);
   const list = $("cashList");
   if(!list) return;
+
   const txs = (state.cash||[]).slice().sort((a,b)=> (b.date||"").localeCompare(a.date||""));
   const filtered = q ? txs.filter(t=> matchesQuery(t,q)) : txs;
+
   if(filtered.length===0){
     list.innerHTML = `<div class="muted">Nenhum movimento.</div>`;
     return;
   }
+
   list.innerHTML = "";
   for(const t of filtered){
     const el = document.createElement("div");
@@ -968,15 +1100,16 @@ function renderCash(){
       if(!confirm("Excluir este movimento do caixa?")) return;
       state.cash = (state.cash||[]).filter(x=>x.id!==t.id);
       saveState();
-      if(session) cloudSync().catch(()=>{});
     };
     list.appendChild(el);
   }
 }
-function labelPay(m){
-  const map = {pix:"Pix", dinheiro:"Dinheiro", debito:"Débito", credito:"Crédito", boleto:"Boleto", outro:"Outro"};
-  return map[m] || (m||"");
+
+function openCash(){
+  renderCash();
+  openModal("cash");
 }
+
 function openCashTx(mode){
   cashTxMode = mode;
   $("cashTxTitle").textContent = mode==="out" ? "Saída" : "Entrada";
@@ -986,6 +1119,7 @@ function openCashTx(mode){
   $("cashTxAmount").value = "";
   openModal("cashTx");
 }
+
 function saveCashTx(){
   const date = $("cashTxDate").value || todayISO();
   const desc = norm($("cashTxDesc").value);
@@ -997,11 +1131,11 @@ function saveCashTx(){
   state.cash.push({id:uuid(), type: cashTxMode, date, desc, method, amount, created_at:new Date().toISOString()});
   saveState();
   closeAllModals();
-  if(session) cloudSync().catch(()=>{});
 }
 
-/* Relatório */
+/* ===== Relatório ===== */
 function monthKey(iso){ return (iso||"").slice(0,7); } // YYYY-MM
+
 function buildReportMonthOptions(){
   const sel = $("reportMonth");
   if(!sel) return;
@@ -1014,22 +1148,16 @@ function buildReportMonthOptions(){
   if(!arr.includes(cur) && arr.length) sel.value = arr[0];
   else sel.value = cur;
 }
-function openReport(){
-  buildReportMonthOptions();
-  renderReport();
-  openModal("report");
-}
+
 function renderReport(){
   const m = $("reportMonth")?.value || monthKey(todayISO());
   const monthServices = (state.services||[]).filter(s=> monthKey(s.data_servico)===m);
   const paidTotal = monthServices.filter(s=>s.paid).reduce((a,s)=>a+Number(s.total||0),0);
   const openTotal = monthServices.filter(s=>!s.paid).reduce((a,s)=>a+Number(s.total||0),0);
-  const repPaid=$("repPaid"), repOpen=$("repOpen"), repCount=$("repCount");
-  if(repPaid) repPaid.textContent = money(paidTotal);
-  if(repOpen) repOpen.textContent = money(openTotal);
-  if(repCount) repCount.textContent = String(monthServices.length);
+  if($("repPaid")) $("repPaid").textContent = money(paidTotal);
+  if($("repOpen")) $("repOpen").textContent = money(openTotal);
+  if($("repCount")) $("repCount").textContent = String(monthServices.length);
 
-  // breakdown por forma pagamento (somente pagos)
   const by = {};
   for(const s of monthServices.filter(s=>s.paid)){
     const k = s.pay_method || "outro";
@@ -1059,6 +1187,13 @@ function renderReport(){
     `;
   }
 }
+
+function openReport(){
+  buildReportMonthOptions();
+  renderReport();
+  openModal("report");
+}
+
 function exportReportCSV(){
   const m = $("reportMonth")?.value || monthKey(todayISO());
   const monthServices = (state.services||[]).filter(s=> monthKey(s.data_servico)===m);
@@ -1087,11 +1222,7 @@ function exportReportCSV(){
   URL.revokeObjectURL(a.href);
 }
 
-/* Avisos troca de óleo */
-function openOilAlerts(){
-  renderOilAlerts();
-  openModal("oilAlerts");
-}
+/* ===== Avisos troca de óleo ===== */
 function renderOilAlerts(){
   const list = $("oilAlertsList");
   if(!list) return;
@@ -1100,10 +1231,12 @@ function renderOilAlerts(){
     .map(s=>({s, badge: dueBadgeForOil(s)}))
     .filter(x=>x.badge && (x.badge.cls==="red" || x.badge.cls==="warn"))
     .sort((a,b)=> (a.s.oil_next_date||"").localeCompare(b.s.oil_next_date||""));
+
   if(items.length===0){
     list.innerHTML = `<div class="muted">Nenhum aviso no momento.</div>`;
     return;
   }
+
   list.innerHTML="";
   for(const {s,badge} of items){
     const v = state.vehicles.find(v=>v.id===s.veiculo_id);
@@ -1130,52 +1263,9 @@ function renderOilAlerts(){
   }
 }
 
-/* Lembrar e-mail/senha do Supabase (opcional) */
-function initRememberCloudCreds(){
-  const emailEl = $("cloudEmail");
-  const passEl = $("cloudPass");
-  const remE = $("rememberEmail");
-  const remP = $("rememberPass");
-  if(emailEl){
-    const savedEmail = localStorage.getItem(APP.rememberEmailKey) || "";
-    if(savedEmail) emailEl.value = savedEmail;
-  }
-  if(passEl){
-    const savedPass = localStorage.getItem(APP.rememberPassKey) || "";
-    if(savedPass) passEl.value = savedPass;
-  }
-  if(remE){
-    remE.checked = true;
-    remE.addEventListener("change", ()=>{
-      if(!remE.checked) localStorage.removeItem(APP.rememberEmailKey);
-    });
-  }
-  if(remP){
-    remP.checked = !!localStorage.getItem(APP.rememberPassKey);
-    remP.addEventListener("change", ()=>{
-      if(!remP.checked) localStorage.removeItem(APP.rememberPassKey);
-    });
-  }
-
-  // ao clicar Entrar, salvar se marcado
-  const btn = $("btnCloudLogin");
-  if(btn){
-    btn.addEventListener("click", ()=>{
-      if(remE?.checked) localStorage.setItem(APP.rememberEmailKey, (emailEl?.value||"").trim());
-      if(remP?.checked) localStorage.setItem(APP.rememberPassKey, (passEl?.value||""));
-    }, {capture:true});
-  }
-}
-
-/* Auto Sync */
-let syncTimer = null;
-function startAutoSync(){
-  if(syncTimer) clearInterval(syncTimer);
-  syncTimer = setInterval(()=>{
-    if(session && navigator.onLine){
-      cloudSync().catch(()=>{});
-    }
-  }, 120000); // 2 min
+function openOilAlerts(){
+  renderOilAlerts();
+  openModal("oilAlerts");
 }
 
 /* Wire extra UI buttons */
@@ -1185,21 +1275,20 @@ function wireExtraButtons(){
   $("btnCashOut")?.addEventListener("click", ()=>openCashTx("out"));
   $("cashTxSave")?.addEventListener("click", saveCashTx);
   $("cashQ")?.addEventListener("input", renderCash);
+
   $("btnReport")?.addEventListener("click", openReport);
   $("reportMonth")?.addEventListener("change", renderReport);
   $("btnReportExport")?.addEventListener("click", exportReportCSV);
-  $("btnOilAlerts")?.addEventListener("click", openOilAlerts);
 
-  // payment listeners
-  $("osTotal")?.addEventListener("input", updatePayInfo);
-  $("osPayAmount")?.addEventListener("input", updatePayInfo);
-  $("osPayChange")?.addEventListener("input", updatePayInfo);
+  $("btnOilAlerts")?.addEventListener("click", openOilAlerts);
 }
 
+/* ===== Busca ===== */
+$("q")?.addEventListener("input", ()=> renderAll());
 
-
+/* ===== Init ===== */
 window.addEventListener("load", ()=>{
-  // register service worker (PWA)
+  // PWA SW
   if("serviceWorker" in navigator){
     navigator.serviceWorker.register("./sw.js").catch(()=>{});
   }
@@ -1220,6 +1309,5 @@ window.addEventListener("load", ()=>{
   initRememberCloudCreds();
 
   renderAll();
-  initAuthState().then(()=> startAutoSync()).catch(()=>{});
+  initAuthState().catch(()=>{});
 });
-
