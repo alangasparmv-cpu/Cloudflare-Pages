@@ -1,70 +1,34 @@
-const CACHE = "lopes-sm-cache-v2.2";
+
+const CACHE = 'lopes-mecanica-v1.8';
 const ASSETS = [
   "./",
   "./index.html",
-  "./styles.css?v=2.5",
-  "./app.js?v=2.5",
-  "./manifest.json?v=2.5",
-  "./assets/logo-192.png",
-  "./assets/logo-512.png"
+  "./styles.css",
+  "./app.js",
+  "./manifest.json",
+  "./assets/logo.png",
+  "./assets/icon-192.png",
+  "./assets/icon-512.png"
 ];
 
-self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches.open(CACHE).then((cache) => cache.addAll(ASSETS)).then(() => self.skipWaiting())
-  );
+self.addEventListener("install", (e) => {
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)));
+  self.skipWaiting();
 });
 
-self.addEventListener("activate", (event) => {
-  event.waitUntil(
-    caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim())
-  );
+self.addEventListener("activate", (e) => {
+  e.waitUntil(caches.keys().then(keys => Promise.all(keys.map(k => k !== CACHE ? caches.delete(k) : null))));
+  self.clients.claim();
 });
 
-function isAppAsset(url) {
-  // Always update core app assets from network first
-  return (
-    url.origin === self.location.origin &&
-    (url.pathname.endsWith("/app.js") ||
-      url.pathname.endsWith("/sw.js") ||
-      url.pathname.endsWith("/styles.css") ||
-      url.pathname.endsWith("/manifest.json") ||
-      url.pathname === "/" ||
-      url.pathname.endsWith("/index.html"))
+self.addEventListener("fetch", (e) => {
+  const req = e.request;
+  if(req.method !== "GET") return;
+  e.respondWith(
+    caches.match(req).then(cached => cached || fetch(req).then(res => {
+      const copy = res.clone();
+      caches.open(CACHE).then(c => c.put(req, copy));
+      return res;
+    }).catch(() => cached))
   );
-}
-
-self.addEventListener("fetch", (event) => {
-  const req = event.request;
-  if (req.method !== "GET") return;
-
-  const url = new URL(req.url);
-
-  // Network-first for app shell assets (prevents old cached JS causing Supabase URL bugs)
-  if (isAppAsset(url)) {
-    event.respondWith(
-      fetch(req)
-        .then((res) => {
-          const copy = res.clone();
-          caches.open(CACHE).then((cache) => cache.put(req, copy));
-          return res;
-        })
-        .catch(() => caches.match(req).then((c) => c || caches.match("./index.html")))
-    );
-    return;
-  }
-
-  // Cache-first for other same-origin assets
-  if (url.origin === self.location.origin) {
-    event.respondWith(
-      caches.match(req).then((cached) =>
-        cached ||
-        fetch(req).then((res) => {
-          const copy = res.clone();
-          caches.open(CACHE).then((cache) => cache.put(req, copy));
-          return res;
-        })
-      )
-    );
-  }
 });

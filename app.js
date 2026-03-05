@@ -3,7 +3,7 @@
    NÃO salva senha. Login Supabase via email/senha (Auth).
 */
 const APP = {
-  supabaseUrl: "https://euoetxrcwzkogtdbuiqj.supabase.co",
+  supabaseUrl: "https://euoetrxcwzkgotdbuiqj.supabase.co",
   supabaseAnonKey: "sb_publishable_q87P7Cy6GQHh6wNxtOOSZA_CwLXiFVN",
   storageKey: "lopes_mecanica_state_v1",
   pinKey: "lopes_mecanica_pin_v1",
@@ -91,11 +91,11 @@ const modals = {
   config: $("modalConfig"),
 };
 function closeAllModals(){
-  if (backdrop) backdrop.hidden = true;
+  backdrop.hidden = true;
   Object.values(modals).forEach(m => m.hidden = true);
 }
 function openModal(which){
-  if (backdrop) backdrop.hidden = false;
+  backdrop.hidden = false;
   modals[which].hidden = false;
 }
 document.addEventListener("click", (e)=>{
@@ -813,19 +813,11 @@ async function initAuthState(){
 }
 
 window.addEventListener("load", ()=>{
-closeAllModals();
-  history.replaceState(null, "", location.pathname + location.search);
-  window.scrollTo(0, 0);
-   // service worker disabled for debugging Supabase connection
-if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.getRegistrations()
-    .then((regs)=>Promise.all(regs.map(r=>r.unregister())))
-    .catch(()=>{});
-  if (window.caches && caches.keys) {
-    caches.keys().then(keys=>Promise.all(keys.map(k=>caches.delete(k)))).catch(()=>{});
+  // register sw
+  if("serviceWorker" in navigator){
+    navigator.serviceWorker.register("./sw.js").catch(()=>{});
   }
-}
-// pin gate (simple)
+  // pin gate (simple)
   const pin = localStorage.getItem(APP.pinKey) || "1234";
   setTimeout(()=>{
     const entered = prompt("Digite o PIN do sistema (padrão: 1234):");
