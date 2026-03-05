@@ -4,25 +4,12 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="theme-color" content="#d50000" />
-  <link rel="manifest" href="manifest.json" />
+  <link rel="manifest" href="manifest.json?v=2.5" />
   <link rel="icon" href="assets/icon-192.png" />
   <title>Lopes Serviços Mecânicos</title>
-  <link rel="stylesheet" href="styles.css" />
-
-  <!-- ✅ GARANTE que hidden sempre oculta (corrige modal abrindo sozinho / não fechando) -->
-  <style>
-    [hidden] { display: none !important; }
-  </style>
-
-  <!-- ✅ Remove qualquer #hash que possa puxar para Config/alguma seção -->
-  <script>
-    if (location.hash) {
-      history.replaceState(null, "", location.pathname + location.search);
-    }
-  </script>
-
+  <link rel="stylesheet" href="styles.css?v=2.5" />
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script defer src="app.js"></script>
+  <script defer src="app.js?v=2.5"></script>
 </head>
 <body>
   <header class="topbar">
@@ -34,8 +21,8 @@
       </div>
     </div>
     <div class="top-actions">
-      <button class="btn ghost" id="btnSync" title="Sincronizar" type="button">☁️</button>
-      <button class="btn ghost" id="btnConfig" title="Configurações" type="button">⚙️</button>
+      <button class="btn ghost" id="btnSync" title="Sincronizar">☁️</button>
+      <button class="btn ghost" id="btnConfig" title="Configurações">⚙️</button>
     </div>
   </header>
 
@@ -43,7 +30,7 @@
     <section class="card search">
       <div class="row">
         <input id="q" class="input" placeholder="Buscar por placa, cliente ou telefone…" />
-        <button id="btnNewOS" class="btn primary" type="button">Nova OS</button>
+        <button id="btnNewOS" class="btn primary">Nova OS</button>
       </div>
       <div class="chips" id="quickChips"></div>
     </section>
@@ -52,7 +39,7 @@
       <section class="card">
         <div class="card-h">
           <h2>Clientes</h2>
-          <button class="btn" id="btnNewClient" type="button">+ Cliente</button>
+          <button class="btn" id="btnNewClient">+ Cliente</button>
         </div>
         <div id="clientsList" class="list"></div>
       </section>
@@ -60,15 +47,19 @@
       <section class="card">
         <div class="card-h">
           <h2>Veículos</h2>
-          <button class="btn" id="btnNewVehicle" type="button">+ Veículo</button>
+          <button class="btn" id="btnNewVehicle">+ Veículo</button>
         </div>
         <div id="vehiclesList" class="list"></div>
       </section>
 
       <section class="card">
-        <div class="card-h">
-          <h2>Serviços / OS</h2>
-          <div class="muted">Troca de óleo calcula por data e km (o que vencer primeiro).</div>
+        <div class="card-h" style="gap:12px; align-items:flex-start;">
+          <div>
+            <h2>Serviços / OS</h2>
+            <div class="muted">Troca de óleo calcula por data e km (o que vencer primeiro).</div>
+          </div>
+          <div class="spacer"></div>
+          <button class="btn" id="btnCash">💰 Caixa</button>
         </div>
         <div id="servicesList" class="list"></div>
       </section>
@@ -81,7 +72,7 @@
   <div class="modal-card" id="modalClient" hidden>
     <div class="modal-h">
       <h3 id="clientTitle">Cliente</h3>
-      <button class="btn ghost" data-close type="button">✕</button>
+      <button type="button" class="btn ghost" data-close>✕</button>
     </div>
     <div class="modal-b">
       <div class="form">
@@ -94,17 +85,17 @@
       </div>
     </div>
     <div class="modal-f">
-      <button class="btn danger" id="clientDelete" type="button">Excluir</button>
+      <button class="btn danger" id="clientDelete">Excluir</button>
       <div class="spacer"></div>
-      <button class="btn" data-close type="button">Cancelar</button>
-      <button class="btn primary" id="clientSave" type="button">Salvar</button>
+      <button type="button" class="btn" data-close>Cancelar</button>
+      <button class="btn primary" id="clientSave">Salvar</button>
     </div>
   </div>
 
   <div class="modal-card" id="modalVehicle" hidden>
     <div class="modal-h">
       <h3 id="vehicleTitle">Veículo</h3>
-      <button class="btn ghost" data-close type="button">✕</button>
+      <button type="button" class="btn ghost" data-close>✕</button>
     </div>
     <div class="modal-b">
       <div class="form">
@@ -112,8 +103,13 @@
         <select id="vehicleCliente" class="input"></select>
         <label>Placa</label>
         <input id="vehiclePlaca" class="input" placeholder="ABC1D23" />
+        <label>Marca</label>
+        <input id="vehicleMarca" class="input" placeholder="ex: Volkswagen" list="dlMarcas" />
+        <datalist id="dlMarcas"></datalist>
+
         <label>Modelo</label>
-        <input id="vehicleModelo" class="input" placeholder="ex: Gol 1.6" />
+        <input id="vehicleModelo" class="input" placeholder="ex: Gol 1.6" list="dlModelos" />
+        <datalist id="dlModelos"></datalist>
         <label>Ano</label>
         <input id="vehicleAno" class="input" placeholder="ex: 2015" />
         <label>KM Atual</label>
@@ -123,17 +119,17 @@
       </div>
     </div>
     <div class="modal-f">
-      <button class="btn danger" id="vehicleDelete" type="button">Excluir</button>
+      <button class="btn danger" id="vehicleDelete">Excluir</button>
       <div class="spacer"></div>
-      <button class="btn" data-close type="button">Cancelar</button>
-      <button class="btn primary" id="vehicleSave" type="button">Salvar</button>
+      <button type="button" class="btn" data-close>Cancelar</button>
+      <button class="btn primary" id="vehicleSave">Salvar</button>
     </div>
   </div>
 
   <div class="modal-card" id="modalService" hidden>
     <div class="modal-h">
       <h3 id="serviceTitle">Ordem de Serviço</h3>
-      <button class="btn ghost" data-close type="button">✕</button>
+      <button type="button" class="btn ghost" data-close>✕</button>
     </div>
     <div class="modal-b">
       <div class="form two">
@@ -211,27 +207,61 @@
           <input id="osNumero" class="input" placeholder="ex: 000123" />
         </div>
 
+        <div class="full block" id="payBlock">
+          <div class="block-h">Pagamento</div>
+          <div class="grid3">
+            <div>
+              <label>Forma</label>
+              <select id="osPayMethod" class="input">
+                <option value="pix">Pix</option>
+                <option value="dinheiro">Dinheiro</option>
+                <option value="debito">Cartão Débito</option>
+                <option value="credito">Cartão Crédito</option>
+                <option value="boleto">Boleto</option>
+                <option value="outro">Outro</option>
+              </select>
+            </div>
+            <div>
+              <label>Valor recebido (R$)</label>
+              <input id="osPayAmount" class="input" type="number" min="0" step="0.01" placeholder="ex: 150,00" />
+            </div>
+            <div>
+              <label>Troco (R$)</label>
+              <input id="osPayChange" class="input" type="number" min="0" step="0.01" placeholder="ex: 10,00" />
+            </div>
+          </div>
+
+          <div class="row" style="margin-top:10px">
+            <label class="pill" style="display:inline-flex; gap:8px; align-items:center;">
+              <input id="osPaid" type="checkbox" />
+              Pago
+            </label>
+            <div class="spacer"></div>
+            <div class="muted" id="osPayInfo"></div>
+          </div>
+        </div>
+
         <div class="full">
           <div class="row">
-            <button class="btn" id="btnPrint" type="button">Imprimir / PDF</button>
-            <button class="btn" id="btnWhats" type="button">WhatsApp</button>
+            <button class="btn" id="btnPrint">Imprimir / PDF</button>
+            <button class="btn" id="btnWhats">WhatsApp</button>
             <div class="spacer"></div>
-            <button class="btn danger" id="serviceDelete" type="button">Excluir</button>
+            <button class="btn danger" id="serviceDelete">Excluir</button>
           </div>
         </div>
 
       </div>
     </div>
     <div class="modal-f">
-      <button class="btn" data-close type="button">Fechar</button>
-      <button class="btn primary" id="serviceSave" type="button">Salvar OS</button>
+      <button type="button" class="btn" data-close>Fechar</button>
+      <button class="btn primary" id="serviceSave">Salvar OS</button>
     </div>
   </div>
 
   <div class="modal-card" id="modalConfig" hidden>
     <div class="modal-h">
       <h3>Configurações</h3>
-      <button class="btn ghost" data-close type="button">✕</button>
+      <button type="button" class="btn ghost" data-close>✕</button>
     </div>
     <div class="modal-b">
       <div class="form">
@@ -240,7 +270,7 @@
           <div class="row">
             <input id="pinOld" class="input" type="password" placeholder="PIN atual" />
             <input id="pinNew" class="input" type="password" placeholder="Novo PIN" />
-            <button id="btnPin" class="btn" type="button">Alterar</button>
+            <button id="btnPin" class="btn">Alterar</button>
           </div>
           <div class="muted">Padrão: 1234</div>
         </div>
@@ -250,11 +280,11 @@
           <div class="row">
             <input id="cloudEmail" class="input" type="email" placeholder="E-mail" />
             <input id="cloudPass" class="input" type="password" placeholder="Senha" />
-            <button id="btnCloudLogin" class="btn primary" type="button">Entrar</button>
+            <button id="btnCloudLogin" class="btn primary">Entrar</button>
           </div>
           <div class="row">
-            <button id="btnCloudLogout" class="btn" type="button">Sair</button>
-            <button id="btnCloudSync" class="btn" type="button">Sincronizar agora</button>
+            <button id="btnCloudLogout" class="btn">Sair</button>
+            <button id="btnCloudSync" class="btn">Sincronizar agora</button>
             <div class="spacer"></div>
             <span class="pill" id="cloudStatus">Offline</span>
           </div>
@@ -264,20 +294,76 @@
         <div class="block">
           <div class="block-h">Backup local</div>
           <div class="row">
-            <button id="btnExport" class="btn" type="button">Exportar JSON</button>
+            <button id="btnExport" class="btn">Exportar JSON</button>
             <label class="btn">
               Importar JSON<input id="importFile" type="file" accept="application/json" hidden />
             </label>
-            <button id="btnWipe" class="btn danger" type="button">Zerar tudo</button>
+            <button id="btnWipe" class="btn danger">Zerar tudo</button>
           </div>
         </div>
 
       </div>
     </div>
     <div class="modal-f">
+      <button type="button" class="btn" data-close>Fechar</button>
+    </div>
+  </div>
+  <!-- CAIXA -->
+  <div class="modal-card" id="modalCash" hidden>
+    <div class="modal-h">
+      <h3>Caixa</h3>
+      <button class="btn ghost" data-close type="button">✕</button>
+    </div>
+    <div class="modal-b">
+      <div class="row" style="gap:10px; margin-bottom:10px">
+        <button class="btn primary" id="btnCashIn" type="button">+ Entrada</button>
+        <button class="btn danger" id="btnCashOut" type="button">- Saída</button>
+        <div class="spacer"></div>
+        <div class="pill" id="cashBalancePill">Saldo: R$ 0,00</div>
+      </div>
+
+      <div class="form">
+        <label>Buscar</label>
+        <input id="cashQ" class="input" placeholder="ex: pix, fornecedor, combustível..." />
+      </div>
+
+      <div id="cashList" class="list" style="margin-top:10px"></div>
+      <div class="muted" style="margin-top:10px">Entradas/saídas ficam salvas localmente e na nuvem (quando sincronizado).</div>
+    </div>
+    <div class="modal-f">
       <button class="btn" data-close type="button">Fechar</button>
     </div>
   </div>
+
+  <div class="modal-card" id="modalCashTx" hidden>
+    <div class="modal-h">
+      <h3 id="cashTxTitle">Movimento</h3>
+      <button class="btn ghost" data-close type="button">✕</button>
+    </div>
+    <div class="modal-b">
+      <div class="form">
+        <label>Data</label>
+        <input id="cashTxDate" class="input" type="date" />
+        <label>Descrição</label>
+        <input id="cashTxDesc" class="input" placeholder="ex: Combustível, fornecedor, OS 000123..." />
+        <label>Forma</label>
+        <select id="cashTxMethod" class="input">
+          <option value="pix">Pix</option>
+          <option value="dinheiro">Dinheiro</option>
+          <option value="debito">Cartão Débito</option>
+          <option value="credito">Cartão Crédito</option>
+          <option value="outro">Outro</option>
+        </select>
+        <label>Valor (R$)</label>
+        <input id="cashTxAmount" class="input" type="number" min="0" step="0.01" />
+      </div>
+    </div>
+    <div class="modal-f">
+      <button class="btn" data-close type="button">Cancelar</button>
+      <button class="btn primary" id="cashTxSave" type="button">Salvar</button>
+    </div>
+  </div>
+
 
   <!-- PRINT TEMPLATE -->
   <div id="printArea" class="print-area" hidden></div>

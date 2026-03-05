@@ -1,3 +1,4 @@
+
 /* Lopes Serviços Mecânicos - PWA Offline + Sync Supabase (single table app_state)
    NÃO salva senha. Login Supabase via email/senha (Auth).
 */
@@ -5,6 +6,7 @@ const APP = {
   supabaseUrl: "https://euoetxrcwzkogtdbuiqj.supabase.co",
   supabaseAnonKey: "sb_publishable_q87P7Cy6GQHh6wNxtOOSZA_CwLXiFVN",
   storageKey: "lopes_mecanica_state_v1",
+  backupKey: "lopes_mecanica_backups_v1",
   pinKey: "lopes_mecanica_pin_v1",
 };
 
@@ -15,6 +17,19 @@ const norm = (s) => (s||"").toString().trim();
 const normPlaca = (p) => norm(p).toUpperCase().replace(/[^A-Z0-9]/g,"");
 const money = (n) => (Number(n||0)).toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
 const uuid = () => crypto.randomUUID();
+
+// Catálogo simples (offline) de Marcas -> Modelos (edite/expanda quando quiser)
+const VEHICLE_CATALOG = {
+  "Chevrolet": ["Onix", "Onix Plus", "Prisma", "Celta", "Corsa", "S10", "Tracker", "Spin"],
+  "Fiat": ["Argo", "Mobi", "Palio", "Uno", "Strada", "Toro", "Cronos", "Siena"],
+  "Ford": ["Ka", "Fiesta", "Focus", "EcoSport", "Ranger"],
+  "Honda": ["Civic", "City", "Fit", "HR-V", "WR-V"],
+  "Hyundai": ["HB20", "Creta", "i30"],
+  "Renault": ["Kwid", "Sandero", "Logan", "Duster"],
+  "Toyota": ["Corolla", "Etios", "Yaris", "Hilux"],
+  "Volkswagen": ["Gol", "Voyage", "Polo", "Virtus", "Fox", "T-Cross", "Saveiro"],
+};
+
 
 function addMonths(dateISO, months){
   const d = new Date(dateISO + "T00:00:00");
@@ -29,35 +44,60 @@ function loadState(){
   const raw = localStorage.getItem(APP.storageKey);
   if(!raw){
     return {
-      version: "1.2",
+      version: "1.3",
       updated_at: new Date().toISOString(),
       counters: { os: 1 },
       clients: [],
       vehicles: [],
-      services: []
+      services: [],
+      cash: []
     };
   }
   try{
     return JSON.parse(raw);
   }catch{
     return {
-      version: "1.2",
+      version: "1.3",
       updated_at: new Date().toISOString(),
       counters: { os: 1 },
       clients: [],
       vehicles: [],
-      services: []
+      services: [],
+      cash: []
     };
   }
+}
+
+function pushAutoBackup(){
+  try{
+    const raw = localStorage.getItem(APP.backupKey);
+    const list = raw ? JSON.parse(raw) : [];
+    const snap = { at: new Date().toISOString(), payload: state };
+    list.unshift(snap);
+    // mantém últimos 10
+    const trimmed = list.slice(0, 10);
+    localStorage.setItem(APP.backupKey, JSON.stringify(trimmed));
+  }catch{}
 }
 
 function saveState(){
   state.updated_at = new Date().toISOString();
   localStorage.setItem(APP.storageKey, JSON.stringify(state));
+  pushAutoBackup();
   renderAll();
 }
 
 let state = loadState();
+
+function normalizeStateSchema(){
+  state.version = state.version || "1.3";
+  state.clients = Array.isArray(state.clients) ? state.clients : [];
+  state.vehicles = Array.isArray(state.vehicles) ? state.vehicles : [];
+  state.services = Array.isArray(state.services) ? state.services : [];
+  state.cash = Array.isArray(state.cash) ? state.cash : [];
+}
+
+normalizeStateSchema();
 
 // Supabase client (loaded via CDN)
 let supabaseClient = null;
@@ -88,33 +128,17 @@ const modals = {
   vehicle: $("modalVehicle"),
   service: $("modalService"),
   config: $("modalConfig"),
+  cash: $("modalCash"),
+  cashTx: $("modalCashTx"),
 };
-
-// ✅ FIX: força fechar mesmo se CSS estiver forçando display
 function closeAllModals(){
-  if (backdrop){
-    backdrop.hidden = true;
-    backdrop.style.display = "none";
-  }
-  Object.values(modals).forEach(m => {
-    if(!m) return;
-    m.hidden = true;
-    m.style.display = "none";
-  });
+  if (backdrop) backdrop.hidden = true;
+  Object.values(modals).forEach(m => m.hidden = true);
 }
-
-// ✅ FIX: abre forçando display também
 function openModal(which){
-  if (backdrop){
-    backdrop.hidden = false;
-    backdrop.style.display = "block";
-  }
-  const m = modals[which];
-  if(!m) return;
-  m.hidden = false;
-  m.style.display = "block";
+  if (backdrop) backdrop.hidden = false;
+  modals[which].hidden = false;
 }
-
 document.addEventListener("click", (e)=>{
   const t = e.target;
   // Click outside (backdrop) closes
@@ -195,7 +219,7 @@ function renderVehicles(){
     el.innerHTML = `
       <div>
         <div class="title">${escapeHtml(v.placa||"(Sem placa)")}</div>
-        <div class="sub">${escapeHtml(v.modelo||"")} • ${escapeHtml((c&&c.nome)||"")} • KM ${escapeHtml(String(v.km_atual??""))}</div>
+        <div class="sub">${escapeHtml(((v.marca||"") + " " + (v.modelo||"")).trim())} • ${escapeHtml((c&&c.nome)||"")} • KM ${escapeHtml(String(v.km_atual??""))}</div>
       </div>
       <div class="badge">${escapeHtml((v.id||"").slice(0,8))}</div>
     `;
@@ -221,7 +245,8 @@ function renderServices(){
     const el = document.createElement("div");
     el.className="item";
     const title = s.os_numero ? `OS ${s.os_numero}` : (s.tipo==="troca_oleo" ? "Troca de óleo" : "Serviço");
-    const sub = `${fmtDate(s.data_servico)} • ${v? v.placa:""} • ${c? c.nome:""} • ${money(s.total||0)}`;
+    const paidTxt = s.paid ? " • Pago" : "";
+    const sub = `${fmtDate(s.data_servico)} • ${v? v.placa:""} • ${c? c.nome:""} • ${money(s.total||0)}${paidTxt}`;
     const badgeHtml = badge ? `<div class="badge ${badge.cls}">${badge.txt}</div>` : `<div class="badge">${escapeHtml(s.tipo||"")}</div>`;
     el.innerHTML = `
       <div>
@@ -263,6 +288,115 @@ function renderAll(){
   renderServices();
   refreshSelects();
   refreshCloudStatus();
+
+
+// =======================
+// 💰 CAIXA
+// =======================
+let cashTxType = "in"; // "in" | "out"
+let editingCashTxId = null;
+
+function ensureCash(){
+  state.cash = Array.isArray(state.cash) ? state.cash : [];
+}
+
+function cashBalance(){
+  ensureCash();
+  let bal = 0;
+  for(const t of state.cash){
+    const v = Number(t.amount||0);
+    bal += (t.type === "out" ? -v : v);
+  }
+  return bal;
+}
+
+function renderCash(){
+  const listEl = $("cashList");
+  const pill = $("cashBalancePill");
+  const qEl = $("cashQ");
+  if(!listEl || !pill || !qEl) return;
+
+  ensureCash();
+  const q = norm(qEl.value);
+  const list = state.cash.slice()
+    .sort((a,b)=> (b.created_at||"").localeCompare(a.created_at||""))
+    .filter(x => !q || matchesQuery(x, q));
+
+  pill.textContent = `Saldo: ${money(cashBalance())}`;
+
+  if(list.length === 0){
+    listEl.innerHTML = `<div class="muted">Nenhum lançamento no caixa.</div>`;
+    return;
+  }
+
+  listEl.innerHTML = "";
+  for(const t of list){
+    const el = document.createElement("div");
+    el.className = "item";
+    const sign = t.type === "out" ? "-" : "+";
+    const title = `${sign} ${money(t.amount)} • ${escapeHtml(t.method||"")}`;
+    const sub = `${fmtDate(t.date||todayISO())} • ${escapeHtml(t.desc||"")}`;
+
+    el.innerHTML = `
+      <div>
+        <div class="title">${title}</div>
+        <div class="sub">${escapeHtml(sub)}</div>
+      </div>
+      <div class="badge">Editar</div>
+    `;
+    el.onclick = ()=> openCashTx(t.id);
+    listEl.appendChild(el);
+  }
+}
+
+function openCash(){
+  openModal("cash");
+  renderCash();
+}
+
+function openCashTx(id){
+  ensureCash();
+  editingCashTxId = id || null;
+  const t = state.cash.find(x=>x.id===id) || null;
+
+  $("cashTxTitle").textContent = t ? "Editar movimento" : (cashTxType==="out" ? "Nova saída" : "Nova entrada");
+  $("cashTxDate").value = t?.date || todayISO();
+  $("cashTxDesc").value = t?.desc || "";
+  $("cashTxMethod").value = t?.method || "pix";
+  $("cashTxAmount").value = t?.amount ?? "";
+  openModal("cashTx");
+}
+
+function saveCashTx(){
+  ensureCash();
+  const date = $("cashTxDate").value || todayISO();
+  const desc = norm($("cashTxDesc").value);
+  const method = $("cashTxMethod").value || "pix";
+  const amount = Number($("cashTxAmount").value||0);
+
+  if(!desc){ toast("Informe uma descrição."); return; }
+  if(!amount || amount <= 0){ toast("Informe um valor válido."); return; }
+
+  if(editingCashTxId){
+    const t = state.cash.find(x=>x.id===editingCashTxId);
+    Object.assign(t, { date, desc, method, amount, updated_at: new Date().toISOString() });
+  }else{
+    state.cash.push({
+      id: uuid(),
+      type: cashTxType,
+      date,
+      desc,
+      method,
+      amount,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+  }
+
+  saveState();
+  closeAllModals();
+  if(session && navigator.onLine) cloudSync().catch(()=>{});
+}
 }
 
 /* CRUD - Client */
@@ -310,7 +444,9 @@ function openVehicle(id){
   $("vehicleTitle").textContent = v ? "Editar Veículo" : "Novo Veículo";
   $("vehicleCliente").value = v?.cliente_id || "";
   $("vehiclePlaca").value = v?.placa || "";
+  $("vehicleMarca").value = v?.marca || "";
   $("vehicleModelo").value = v?.modelo || "";
+  refreshModelDatalist();
   $("vehicleAno").value = v?.ano || "";
   $("vehicleKm").value = v?.km_atual ?? "";
   $("vehicleObs").value = v?.observacoes || "";
@@ -318,9 +454,17 @@ function openVehicle(id){
   openModal("vehicle");
 }
 $("btnNewVehicle").onclick = ()=> openVehicle(null);
+
+// autocomplete Marca/Modelo
+if ($("vehicleMarca")) {
+  refreshMarcaDatalist();
+  $("vehicleMarca").addEventListener("input", ()=> refreshModelDatalist());
+}
+
 $("vehicleSave").onclick = ()=>{
   const cliente_id = $("vehicleCliente").value || null;
   const placa = normPlaca($("vehiclePlaca").value);
+  const marca = norm($("vehicleMarca").value);
   const modelo = norm($("vehicleModelo").value);
   const ano = norm($("vehicleAno").value);
   const km_atual = Number($("vehicleKm").value || 0);
@@ -332,9 +476,9 @@ $("vehicleSave").onclick = ()=>{
 
   if(editingVehicleId){
     const v = state.vehicles.find(x=>x.id===editingVehicleId);
-    Object.assign(v,{cliente_id,placa,modelo,ano,km_atual,observacoes:obs, updated_at:new Date().toISOString()});
+    Object.assign(v,{cliente_id,placa,marca,modelo,ano,km_atual,observacoes:obs, updated_at:new Date().toISOString()});
   }else{
-    state.vehicles.push({id:uuid(), cliente_id, placa, modelo, ano, km_atual, observacoes:obs, created_at:new Date().toISOString(), updated_at:new Date().toISOString()});
+    state.vehicles.push({id:uuid(), cliente_id, placa, marca, modelo, ano, km_atual, observacoes:obs, created_at:new Date().toISOString(), updated_at:new Date().toISOString()});
   }
   saveState();
   closeAllModals();
@@ -364,7 +508,15 @@ function openService(id){
   $("osTipo").value = s?.tipo || "troca_oleo";
   $("osObs").value = s?.observacoes || "";
   $("osTotal").value = s?.total ?? "";
-  $("osNumero").value = s?.os_numero || (s? "": nextOsNumber());
+  $1
+  // ✅ pagamento
+  if ($("osPayMethod")) {
+    $("osPayMethod").value = s?.pay_method || "pix";
+    $("osPayAmount").value = s?.pay_amount ?? "";
+    $("osPayChange").value = s?.pay_change ?? "";
+    $("osPaid").checked = !!s?.paid;
+    updatePayInfo();
+  }
 
   $("osCliente").value = s?.cliente_id || "";
   // vehicles list depends on client; set after refreshSelects
@@ -394,7 +546,7 @@ function filterVehiclesForOs(){
   const cid = $("osCliente").value;
   const sel = $("osVeiculo");
   const all = state.vehicles.filter(v=> !cid || v.cliente_id===cid);
-  sel.innerHTML = `<option value="">Selecione…</option>` + all.map(v=> `<option value="${v.id}">${escapeHtml(v.placa)} — ${escapeHtml(v.modelo||"")}</option>`).join("");
+  sel.innerHTML = `<option value="">Selecione…</option>` + all.map(v=> `<option value="${v.id}">${escapeHtml(v.placa)} — ${escapeHtml(((v.marca||"") + " " + (v.modelo||"")).trim())}</option>`).join("");
 }
 
 $("oilKmInterval").onchange = ()=> { onOilIntervalChange(); previewOil(); };
@@ -402,6 +554,16 @@ $("oilKmCustom").oninput = ()=> previewOil();
 $("oilMonths").oninput = ()=> previewOil();
 $("osData").onchange = ()=> previewOil();
 $("osKm").oninput = ()=> previewOil();
+
+// ✅ pagamento - atualiza resumo
+if ($("osPayMethod")) {
+  $("osTotal").addEventListener("input", ()=> updatePayInfo());
+  $("osPayMethod").addEventListener("change", ()=> updatePayInfo());
+  $("osPayAmount").addEventListener("input", ()=> updatePayInfo());
+  $("osPayChange").addEventListener("input", ()=> updatePayInfo());
+  $("osPaid").addEventListener("change", ()=> updatePayInfo());
+}
+
 
 function onOilIntervalChange(){
   const v = $("oilKmInterval").value;
@@ -423,6 +585,26 @@ function previewOil(){
   $("oilPreview").textContent = `Próxima troca: ${fmtDate(nextDate)} ou ${nextKm ? (nextKm+" km") : "—"} (o que vencer primeiro).`;
 }
 
+
+function updatePayInfo(){
+  const el = $("osPayInfo");
+  if(!el || !$("osPayMethod")) return;
+
+  const total = Number($("osTotal")?.value||0);
+  const paid = $("osPaid")?.checked;
+  const m = $("osPayMethod").value;
+  const amount = Number($("osPayAmount")?.value||0);
+  const change = Number($("osPayChange")?.value||0);
+
+  const label = {
+    pix:"Pix", dinheiro:"Dinheiro", debito:"Débito", credito:"Crédito", boleto:"Boleto", outro:"Outro"
+  }[m] || m;
+
+  el.textContent = paid
+    ? `Pago via ${label} • Total: ${money(total)} • Recebido: ${money(amount)} • Troco: ${money(change)}`
+    : `Não marcado como pago • Total: ${money(total)}`;
+}
+
 $("serviceSave").onclick = ()=>{
   const cliente_id = $("osCliente").value || null;
   const veiculo_id = $("osVeiculo").value || null;
@@ -432,6 +614,13 @@ $("serviceSave").onclick = ()=>{
   const observacoes = norm($("osObs").value);
   const total = Number($("osTotal").value||0);
   const os_numero = norm($("osNumero").value);
+
+  // ✅ pagamento
+  const pay_method = $("osPayMethod") ? ($("osPayMethod").value || "pix") : "pix";
+  const pay_amount = $("osPayAmount") ? Number($("osPayAmount").value||0) : 0;
+  const pay_change = $("osPayChange") ? Number($("osPayChange").value||0) : 0;
+  const paid = $("osPaid") ? !!$("osPaid").checked : false;
+  const paid_at = paid ? new Date().toISOString() : null;
 
   if(!cliente_id){ toast("Selecione o cliente."); return; }
   if(!veiculo_id){ toast("Selecione o veículo."); return; }
@@ -456,6 +645,7 @@ $("serviceSave").onclick = ()=>{
   if(editingServiceId){
     const s = state.services.find(x=>x.id===editingServiceId);
     Object.assign(s,{cliente_id,veiculo_id,data_servico,km_servico,tipo,observacoes,total,os_numero,
+      pay_method, pay_amount, pay_change, paid, paid_at,
       oil_next_date,oil_next_km,oil_km_interval,oil_km_custom,oil_months,oil_spec,
       updated_at:new Date().toISOString()
     });
@@ -465,6 +655,7 @@ $("serviceSave").onclick = ()=>{
       cliente_id, veiculo_id,
       data_servico, km_servico,
       tipo, observacoes, total, os_numero,
+      pay_method, pay_amount, pay_change, paid, paid_at,
       oil_next_date, oil_next_km, oil_km_interval, oil_km_custom, oil_months, oil_spec,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
@@ -616,6 +807,26 @@ function sendWhats(){
 }
 
 /* Select refresh */
+
+// =======================
+// 🚗 Marcas / Modelos (autocomplete offline)
+// =======================
+function refreshMarcaDatalist(){
+  const dl = $("dlMarcas");
+  if(!dl) return;
+  dl.innerHTML = Object.keys(VEHICLE_CATALOG)
+    .sort((a,b)=>a.localeCompare(b))
+    .map(m=> `<option value="${escapeHtml(m)}"></option>`).join("");
+}
+
+function refreshModelDatalist(){
+  const dl = $("dlModelos");
+  if(!dl) return;
+  const marca = norm($("vehicleMarca")?.value);
+  const models = VEHICLE_CATALOG[marca] || [];
+  dl.innerHTML = models.map(m=> `<option value="${escapeHtml(m)}"></option>`).join("");
+}
+
 function refreshSelects(){
   // vehicle modal client list
   const selC = $("vehicleCliente");
@@ -652,12 +863,21 @@ function labelTipo(t){
 function escapeHtml(str){
   return (str||"").toString()
     .replaceAll("&","&amp;").replaceAll("<","&lt;")
-    .replaceAll(">","&gt;").replaceAll('"',"&quot;")
-    .replaceAll("'","&#039;");
+    .replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;");
 }
 
 /* Config + PIN */
 $("btnConfig").onclick = ()=> openModal("config");
+
+// 💰 Caixa
+if ($("btnCash")) {
+  $("btnCash").onclick = ()=> openCash();
+  $("cashQ").addEventListener("input", ()=> renderCash());
+  $("btnCashIn").onclick = ()=> { cashTxType = "in"; editingCashTxId = null; openCashTx(null); };
+  $("btnCashOut").onclick = ()=> { cashTxType = "out"; editingCashTxId = null; openCashTx(null); };
+  $("cashTxSave").onclick = ()=> saveCashTx();
+}
+
 $("btnPin").onclick = ()=>{
   const oldPin = $("pinOld").value || "";
   const newPin = $("pinNew").value || "";
@@ -785,6 +1005,7 @@ $("btnCloudLogin").onclick = async ()=>{
     await cloudLogin(email, pass);
     toast("Conectado ✅");
     refreshCloudStatus();
+    startAutoSync();
   }catch(err){
     toast("Erro: " + (err?.message || err));
   }
@@ -821,6 +1042,32 @@ window.addEventListener("offline", refreshCloudStatus);
 /* Init */
 $("q").addEventListener("input", ()=> renderAll());
 
+
+// =======================
+// 🔄 Sincronização automática (quando logado)
+// =======================
+let autoSyncTimer = null;
+function startAutoSync(){
+  if(autoSyncTimer) clearInterval(autoSyncTimer);
+  autoSyncTimer = setInterval(()=>{
+    if(session && navigator.onLine){
+      cloudSync().catch(()=>{});
+    }
+  }, 60000);
+}
+
+window.addEventListener("visibilitychange", ()=>{
+  if(document.visibilityState === "visible"){
+    if(session && navigator.onLine) cloudSync().catch(()=>{});
+  }
+});
+
+window.addEventListener("beforeunload", ()=>{
+  try{ saveState(); }catch{}
+  // não garantimos sync antes de sair, mas tenta
+  if(session && navigator.onLine) cloudSync().catch(()=>{});
+});
+
 async function initAuthState(){
   try{
     const client = await ensureSupabaseReady();
@@ -828,23 +1075,20 @@ async function initAuthState(){
     session = data.session;
   }catch{ /* ignore */ }
   refreshCloudStatus();
+  startAutoSync();
 }
 
 window.addEventListener("load", ()=>{
-  // ✅ garante que nenhum modal inicia aberto (mesmo se CSS estiver forçando)
-  closeAllModals();
-
-  // ✅ remove qualquer hash (#...) que possa puxar pra config/alguma seção
-  if (location.hash) {
-    history.replaceState(null, "", location.pathname + location.search);
+  // service worker disabled for debugging Supabase connection
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.getRegistrations()
+    .then((regs)=>Promise.all(regs.map(r=>r.unregister())))
+    .catch(()=>{});
+  if (window.caches && caches.keys) {
+    caches.keys().then(keys=>Promise.all(keys.map(k=>caches.delete(k)))).catch(()=>{});
   }
-
-  // register sw
-  if("serviceWorker" in navigator){
-    navigator.serviceWorker.register("./sw.js").catch(()=>{});
-  }
-
-  // pin gate (simple)
+}
+// pin gate (simple)
   const pin = localStorage.getItem(APP.pinKey) || "1234";
   setTimeout(()=>{
     const entered = prompt("Digite o PIN do sistema (padrão: 1234):");
