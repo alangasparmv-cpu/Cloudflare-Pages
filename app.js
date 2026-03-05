@@ -2,7 +2,7 @@
    NÃO salva senha. Login Supabase via email/senha (Auth).
 */
 const APP = {
-  supabaseUrl: "https://euoetrxcwzkgotdbuiqj.supabase.co",
+  supabaseUrl: "https://euoetxrcwzkogtdbuiqj.supabase.co",
   supabaseAnonKey: "sb_publishable_q87P7Cy6GQHh6wNxtOOSZA_CwLXiFVN",
   storageKey: "lopes_mecanica_state_v1",
   pinKey: "lopes_mecanica_pin_v1",
