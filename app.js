@@ -6,8 +6,9 @@ const APP = {
   supabaseUrl: "https://euoetxrcwzkogtdbuiqj.supabase.co",
   supabaseAnonKey: "sb_publishable_q87P7Cy6GQHh6wNxtOOSZA_CwLXiFVN",
   storageKey: "lopes_mecanica_state_v1",
-  backupKey: "lopes_mecanica_backups_v1",
   pinKey: "lopes_mecanica_pin_v1",
+  rememberEmailKey: "lopes_cloud_email_v1",
+  rememberPassKey: "lopes_cloud_pass_v1",
 };
 
 const $ = (id) => document.getElementById(id);
@@ -17,19 +18,6 @@ const norm = (s) => (s||"").toString().trim();
 const normPlaca = (p) => norm(p).toUpperCase().replace(/[^A-Z0-9]/g,"");
 const money = (n) => (Number(n||0)).toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
 const uuid = () => crypto.randomUUID();
-
-// Catálogo simples (offline) de Marcas -> Modelos (edite/expanda quando quiser)
-const VEHICLE_CATALOG = {
-  "Chevrolet": ["Onix", "Onix Plus", "Prisma", "Celta", "Corsa", "S10", "Tracker", "Spin"],
-  "Fiat": ["Argo", "Mobi", "Palio", "Uno", "Strada", "Toro", "Cronos", "Siena"],
-  "Ford": ["Ka", "Fiesta", "Focus", "EcoSport", "Ranger"],
-  "Honda": ["Civic", "City", "Fit", "HR-V", "WR-V"],
-  "Hyundai": ["HB20", "Creta", "i30"],
-  "Renault": ["Kwid", "Sandero", "Logan", "Duster"],
-  "Toyota": ["Corolla", "Etios", "Yaris", "Hilux"],
-  "Volkswagen": ["Gol", "Voyage", "Polo", "Virtus", "Fox", "T-Cross", "Saveiro"],
-};
-
 
 function addMonths(dateISO, months){
   const d = new Date(dateISO + "T00:00:00");
@@ -44,60 +32,39 @@ function loadState(){
   const raw = localStorage.getItem(APP.storageKey);
   if(!raw){
     return {
-      version: "1.3",
+      version: "1.2",
       updated_at: new Date().toISOString(),
       counters: { os: 1 },
       clients: [],
       vehicles: [],
       services: [],
-      cash: []
+      cash: [],
+      settings: { rememberEmail: true, rememberPass: false }
     };
   }
   try{
     return JSON.parse(raw);
   }catch{
     return {
-      version: "1.3",
+      version: "1.2",
       updated_at: new Date().toISOString(),
       counters: { os: 1 },
       clients: [],
       vehicles: [],
       services: [],
-      cash: []
+      cash: [],
+      settings: { rememberEmail: true, rememberPass: false }
     };
   }
-}
-
-function pushAutoBackup(){
-  try{
-    const raw = localStorage.getItem(APP.backupKey);
-    const list = raw ? JSON.parse(raw) : [];
-    const snap = { at: new Date().toISOString(), payload: state };
-    list.unshift(snap);
-    // mantém últimos 10
-    const trimmed = list.slice(0, 10);
-    localStorage.setItem(APP.backupKey, JSON.stringify(trimmed));
-  }catch{}
 }
 
 function saveState(){
   state.updated_at = new Date().toISOString();
   localStorage.setItem(APP.storageKey, JSON.stringify(state));
-  pushAutoBackup();
   renderAll();
 }
 
 let state = loadState();
-
-function normalizeStateSchema(){
-  state.version = state.version || "1.3";
-  state.clients = Array.isArray(state.clients) ? state.clients : [];
-  state.vehicles = Array.isArray(state.vehicles) ? state.vehicles : [];
-  state.services = Array.isArray(state.services) ? state.services : [];
-  state.cash = Array.isArray(state.cash) ? state.cash : [];
-}
-
-normalizeStateSchema();
 
 // Supabase client (loaded via CDN)
 let supabaseClient = null;
@@ -130,6 +97,8 @@ const modals = {
   config: $("modalConfig"),
   cash: $("modalCash"),
   cashTx: $("modalCashTx"),
+  report: $("modalReport"),
+  oilAlerts: $("modalOilAlerts"),
 };
 function closeAllModals(){
   if (backdrop) backdrop.hidden = true;
@@ -219,7 +188,7 @@ function renderVehicles(){
     el.innerHTML = `
       <div>
         <div class="title">${escapeHtml(v.placa||"(Sem placa)")}</div>
-        <div class="sub">${escapeHtml(((v.marca||"") + " " + (v.modelo||"")).trim())} • ${escapeHtml((c&&c.nome)||"")} • KM ${escapeHtml(String(v.km_atual??""))}</div>
+        <div class="sub">${escapeHtml(v.modelo||"")} • ${escapeHtml((c&&c.nome)||"")} • KM ${escapeHtml(String(v.km_atual??""))}</div>
       </div>
       <div class="badge">${escapeHtml((v.id||"").slice(0,8))}</div>
     `;
@@ -245,9 +214,9 @@ function renderServices(){
     const el = document.createElement("div");
     el.className="item";
     const title = s.os_numero ? `OS ${s.os_numero}` : (s.tipo==="troca_oleo" ? "Troca de óleo" : "Serviço");
-    const paidTxt = s.paid ? " • Pago" : "";
-    const sub = `${fmtDate(s.data_servico)} • ${v? v.placa:""} • ${c? c.nome:""} • ${money(s.total||0)}${paidTxt}`;
-    const badgeHtml = badge ? `<div class="badge ${badge.cls}">${badge.txt}</div>` : `<div class="badge">${escapeHtml(s.tipo||"")}</div>`;
+    const sub = `${fmtDate(s.data_servico)} • ${v? v.placa:""} • ${c? c.nome:""} • ${money(s.total||0)}`;
+    const payBadge = s.paid ? `<div class="badge ok">Pago</div>` : `<div class="badge">Aberto</div>`;
+    const badgeHtml = badge ? `<div class="badge ${badge.cls}">${badge.txt}</div>${payBadge}` : `${payBadge}`;
     el.innerHTML = `
       <div>
         <div class="title">${escapeHtml(title)}</div>
@@ -288,115 +257,6 @@ function renderAll(){
   renderServices();
   refreshSelects();
   refreshCloudStatus();
-
-
-// =======================
-// 💰 CAIXA
-// =======================
-let cashTxType = "in"; // "in" | "out"
-let editingCashTxId = null;
-
-function ensureCash(){
-  state.cash = Array.isArray(state.cash) ? state.cash : [];
-}
-
-function cashBalance(){
-  ensureCash();
-  let bal = 0;
-  for(const t of state.cash){
-    const v = Number(t.amount||0);
-    bal += (t.type === "out" ? -v : v);
-  }
-  return bal;
-}
-
-function renderCash(){
-  const listEl = $("cashList");
-  const pill = $("cashBalancePill");
-  const qEl = $("cashQ");
-  if(!listEl || !pill || !qEl) return;
-
-  ensureCash();
-  const q = norm(qEl.value);
-  const list = state.cash.slice()
-    .sort((a,b)=> (b.created_at||"").localeCompare(a.created_at||""))
-    .filter(x => !q || matchesQuery(x, q));
-
-  pill.textContent = `Saldo: ${money(cashBalance())}`;
-
-  if(list.length === 0){
-    listEl.innerHTML = `<div class="muted">Nenhum lançamento no caixa.</div>`;
-    return;
-  }
-
-  listEl.innerHTML = "";
-  for(const t of list){
-    const el = document.createElement("div");
-    el.className = "item";
-    const sign = t.type === "out" ? "-" : "+";
-    const title = `${sign} ${money(t.amount)} • ${escapeHtml(t.method||"")}`;
-    const sub = `${fmtDate(t.date||todayISO())} • ${escapeHtml(t.desc||"")}`;
-
-    el.innerHTML = `
-      <div>
-        <div class="title">${title}</div>
-        <div class="sub">${escapeHtml(sub)}</div>
-      </div>
-      <div class="badge">Editar</div>
-    `;
-    el.onclick = ()=> openCashTx(t.id);
-    listEl.appendChild(el);
-  }
-}
-
-function openCash(){
-  openModal("cash");
-  renderCash();
-}
-
-function openCashTx(id){
-  ensureCash();
-  editingCashTxId = id || null;
-  const t = state.cash.find(x=>x.id===id) || null;
-
-  $("cashTxTitle").textContent = t ? "Editar movimento" : (cashTxType==="out" ? "Nova saída" : "Nova entrada");
-  $("cashTxDate").value = t?.date || todayISO();
-  $("cashTxDesc").value = t?.desc || "";
-  $("cashTxMethod").value = t?.method || "pix";
-  $("cashTxAmount").value = t?.amount ?? "";
-  openModal("cashTx");
-}
-
-function saveCashTx(){
-  ensureCash();
-  const date = $("cashTxDate").value || todayISO();
-  const desc = norm($("cashTxDesc").value);
-  const method = $("cashTxMethod").value || "pix";
-  const amount = Number($("cashTxAmount").value||0);
-
-  if(!desc){ toast("Informe uma descrição."); return; }
-  if(!amount || amount <= 0){ toast("Informe um valor válido."); return; }
-
-  if(editingCashTxId){
-    const t = state.cash.find(x=>x.id===editingCashTxId);
-    Object.assign(t, { date, desc, method, amount, updated_at: new Date().toISOString() });
-  }else{
-    state.cash.push({
-      id: uuid(),
-      type: cashTxType,
-      date,
-      desc,
-      method,
-      amount,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    });
-  }
-
-  saveState();
-  closeAllModals();
-  if(session && navigator.onLine) cloudSync().catch(()=>{});
-}
 }
 
 /* CRUD - Client */
@@ -446,7 +306,6 @@ function openVehicle(id){
   $("vehiclePlaca").value = v?.placa || "";
   $("vehicleMarca").value = v?.marca || "";
   $("vehicleModelo").value = v?.modelo || "";
-  refreshModelDatalist();
   $("vehicleAno").value = v?.ano || "";
   $("vehicleKm").value = v?.km_atual ?? "";
   $("vehicleObs").value = v?.observacoes || "";
@@ -454,13 +313,6 @@ function openVehicle(id){
   openModal("vehicle");
 }
 $("btnNewVehicle").onclick = ()=> openVehicle(null);
-
-// autocomplete Marca/Modelo
-if ($("vehicleMarca")) {
-  refreshMarcaDatalist();
-  $("vehicleMarca").addEventListener("input", ()=> refreshModelDatalist());
-}
-
 $("vehicleSave").onclick = ()=>{
   const cliente_id = $("vehicleCliente").value || null;
   const placa = normPlaca($("vehiclePlaca").value);
@@ -508,15 +360,14 @@ function openService(id){
   $("osTipo").value = s?.tipo || "troca_oleo";
   $("osObs").value = s?.observacoes || "";
   $("osTotal").value = s?.total ?? "";
-  $1
-  // ✅ pagamento
-  if ($("osPayMethod")) {
-    $("osPayMethod").value = s?.pay_method || "pix";
-    $("osPayAmount").value = s?.pay_amount ?? "";
-    $("osPayChange").value = s?.pay_change ?? "";
-    $("osPaid").checked = !!s?.paid;
-    updatePayInfo();
-  }
+  $("osNumero").value = s?.os_numero || (s? "": nextOsNumber());
+
+  // pagamento
+  $("osPaid").checked = !!s?.paid;
+  $("osPayMethod").value = s?.pay_method || "pix";
+  $("osPayAmount").value = s?.pay_amount ?? "";
+  $("osPayChange").value = s?.pay_change ?? "";
+  updatePayInfo();
 
   $("osCliente").value = s?.cliente_id || "";
   // vehicles list depends on client; set after refreshSelects
@@ -546,7 +397,7 @@ function filterVehiclesForOs(){
   const cid = $("osCliente").value;
   const sel = $("osVeiculo");
   const all = state.vehicles.filter(v=> !cid || v.cliente_id===cid);
-  sel.innerHTML = `<option value="">Selecione…</option>` + all.map(v=> `<option value="${v.id}">${escapeHtml(v.placa)} — ${escapeHtml(((v.marca||"") + " " + (v.modelo||"")).trim())}</option>`).join("");
+  sel.innerHTML = `<option value="">Selecione…</option>` + all.map(v=> `<option value="${v.id}">${escapeHtml(v.placa)} — ${escapeHtml(v.modelo||"")}</option>`).join("");
 }
 
 $("oilKmInterval").onchange = ()=> { onOilIntervalChange(); previewOil(); };
@@ -554,16 +405,6 @@ $("oilKmCustom").oninput = ()=> previewOil();
 $("oilMonths").oninput = ()=> previewOil();
 $("osData").onchange = ()=> previewOil();
 $("osKm").oninput = ()=> previewOil();
-
-// ✅ pagamento - atualiza resumo
-if ($("osPayMethod")) {
-  $("osTotal").addEventListener("input", ()=> updatePayInfo());
-  $("osPayMethod").addEventListener("change", ()=> updatePayInfo());
-  $("osPayAmount").addEventListener("input", ()=> updatePayInfo());
-  $("osPayChange").addEventListener("input", ()=> updatePayInfo());
-  $("osPaid").addEventListener("change", ()=> updatePayInfo());
-}
-
 
 function onOilIntervalChange(){
   const v = $("oilKmInterval").value;
@@ -585,26 +426,6 @@ function previewOil(){
   $("oilPreview").textContent = `Próxima troca: ${fmtDate(nextDate)} ou ${nextKm ? (nextKm+" km") : "—"} (o que vencer primeiro).`;
 }
 
-
-function updatePayInfo(){
-  const el = $("osPayInfo");
-  if(!el || !$("osPayMethod")) return;
-
-  const total = Number($("osTotal")?.value||0);
-  const paid = $("osPaid")?.checked;
-  const m = $("osPayMethod").value;
-  const amount = Number($("osPayAmount")?.value||0);
-  const change = Number($("osPayChange")?.value||0);
-
-  const label = {
-    pix:"Pix", dinheiro:"Dinheiro", debito:"Débito", credito:"Crédito", boleto:"Boleto", outro:"Outro"
-  }[m] || m;
-
-  el.textContent = paid
-    ? `Pago via ${label} • Total: ${money(total)} • Recebido: ${money(amount)} • Troco: ${money(change)}`
-    : `Não marcado como pago • Total: ${money(total)}`;
-}
-
 $("serviceSave").onclick = ()=>{
   const cliente_id = $("osCliente").value || null;
   const veiculo_id = $("osVeiculo").value || null;
@@ -615,12 +436,10 @@ $("serviceSave").onclick = ()=>{
   const total = Number($("osTotal").value||0);
   const os_numero = norm($("osNumero").value);
 
-  // ✅ pagamento
-  const pay_method = $("osPayMethod") ? ($("osPayMethod").value || "pix") : "pix";
-  const pay_amount = $("osPayAmount") ? Number($("osPayAmount").value||0) : 0;
-  const pay_change = $("osPayChange") ? Number($("osPayChange").value||0) : 0;
-  const paid = $("osPaid") ? !!$("osPaid").checked : false;
-  const paid_at = paid ? new Date().toISOString() : null;
+  const paid = !!$("osPaid").checked;
+  const pay_method = $("osPayMethod").value;
+  const pay_amount = Number($("osPayAmount").value||0);
+  const pay_change = Number($("osPayChange").value||0);
 
   if(!cliente_id){ toast("Selecione o cliente."); return; }
   if(!veiculo_id){ toast("Selecione o veículo."); return; }
@@ -645,7 +464,7 @@ $("serviceSave").onclick = ()=>{
   if(editingServiceId){
     const s = state.services.find(x=>x.id===editingServiceId);
     Object.assign(s,{cliente_id,veiculo_id,data_servico,km_servico,tipo,observacoes,total,os_numero,
-      pay_method, pay_amount, pay_change, paid, paid_at,
+      paid, pay_method, pay_amount, pay_change,
       oil_next_date,oil_next_km,oil_km_interval,oil_km_custom,oil_months,oil_spec,
       updated_at:new Date().toISOString()
     });
@@ -655,7 +474,7 @@ $("serviceSave").onclick = ()=>{
       cliente_id, veiculo_id,
       data_servico, km_servico,
       tipo, observacoes, total, os_numero,
-      pay_method, pay_amount, pay_change, paid, paid_at,
+      paid, pay_method, pay_amount, pay_change,
       oil_next_date, oil_next_km, oil_km_interval, oil_km_custom, oil_months, oil_spec,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
@@ -807,26 +626,6 @@ function sendWhats(){
 }
 
 /* Select refresh */
-
-// =======================
-// 🚗 Marcas / Modelos (autocomplete offline)
-// =======================
-function refreshMarcaDatalist(){
-  const dl = $("dlMarcas");
-  if(!dl) return;
-  dl.innerHTML = Object.keys(VEHICLE_CATALOG)
-    .sort((a,b)=>a.localeCompare(b))
-    .map(m=> `<option value="${escapeHtml(m)}"></option>`).join("");
-}
-
-function refreshModelDatalist(){
-  const dl = $("dlModelos");
-  if(!dl) return;
-  const marca = norm($("vehicleMarca")?.value);
-  const models = VEHICLE_CATALOG[marca] || [];
-  dl.innerHTML = models.map(m=> `<option value="${escapeHtml(m)}"></option>`).join("");
-}
-
 function refreshSelects(){
   // vehicle modal client list
   const selC = $("vehicleCliente");
@@ -868,16 +667,6 @@ function escapeHtml(str){
 
 /* Config + PIN */
 $("btnConfig").onclick = ()=> openModal("config");
-
-// 💰 Caixa
-if ($("btnCash")) {
-  $("btnCash").onclick = ()=> openCash();
-  $("cashQ").addEventListener("input", ()=> renderCash());
-  $("btnCashIn").onclick = ()=> { cashTxType = "in"; editingCashTxId = null; openCashTx(null); };
-  $("btnCashOut").onclick = ()=> { cashTxType = "out"; editingCashTxId = null; openCashTx(null); };
-  $("cashTxSave").onclick = ()=> saveCashTx();
-}
-
 $("btnPin").onclick = ()=>{
   const oldPin = $("pinOld").value || "";
   const newPin = $("pinNew").value || "";
@@ -1005,7 +794,6 @@ $("btnCloudLogin").onclick = async ()=>{
     await cloudLogin(email, pass);
     toast("Conectado ✅");
     refreshCloudStatus();
-    startAutoSync();
   }catch(err){
     toast("Erro: " + (err?.message || err));
   }
@@ -1042,32 +830,6 @@ window.addEventListener("offline", refreshCloudStatus);
 /* Init */
 $("q").addEventListener("input", ()=> renderAll());
 
-
-// =======================
-// 🔄 Sincronização automática (quando logado)
-// =======================
-let autoSyncTimer = null;
-function startAutoSync(){
-  if(autoSyncTimer) clearInterval(autoSyncTimer);
-  autoSyncTimer = setInterval(()=>{
-    if(session && navigator.onLine){
-      cloudSync().catch(()=>{});
-    }
-  }, 60000);
-}
-
-window.addEventListener("visibilitychange", ()=>{
-  if(document.visibilityState === "visible"){
-    if(session && navigator.onLine) cloudSync().catch(()=>{});
-  }
-});
-
-window.addEventListener("beforeunload", ()=>{
-  try{ saveState(); }catch{}
-  // não garantimos sync antes de sair, mas tenta
-  if(session && navigator.onLine) cloudSync().catch(()=>{});
-});
-
 async function initAuthState(){
   try{
     const client = await ensureSupabaseReady();
@@ -1075,35 +837,374 @@ async function initAuthState(){
     session = data.session;
   }catch{ /* ignore */ }
   refreshCloudStatus();
-  startAutoSync();
 }
+
+
+
+/* ===== Extra features v4.0 ===== */
+
+// Pagamento: info de troco e recebido
+function updatePayInfo(){
+  const total = Number($("osTotal")?.value || 0);
+  const recv = Number($("osPayAmount")?.value || 0);
+  const change = Number($("osPayChange")?.value || 0);
+  const info = $("osPayInfo");
+  if(!info) return;
+  if(!recv && !change){
+    info.textContent = "";
+    return;
+  }
+  const diff = (recv - total - change);
+  info.textContent = `Total: ${money(total)} • Recebido: ${money(recv)} • Troco: ${money(change)} • Dif: ${money(diff)}`;
+}
+
+// Marcas e modelos (base offline - principais do Brasil)
+const VEHICLE_DB = {
+  "Chevrolet": ["Onix","Onix Plus","Prisma","Celta","Corsa","Classic","Cruze","Tracker","S10","Spin","Montana","Astra","Vectra"],
+  "Volkswagen": ["Gol","Voyage","Polo","Virtus","T-Cross","Nivus","Saveiro","Fox","Up!","Jetta","Amarok","Parati"],
+  "Fiat": ["Uno","Mobi","Argo","Cronos","Palio","Siena","Strada","Toro","Punto","Idea","Doblo","Fiorino"],
+  "Ford": ["Ka","Fiesta","Focus","Ecosport","Ranger","Fusion"],
+  "Renault": ["Kwid","Sandero","Logan","Duster","Captur","Oroch"],
+  "Hyundai": ["HB20","HB20S","Creta","Tucson","i30"],
+  "Toyota": ["Corolla","Etios","Yaris","Hilux","SW4","RAV4"],
+  "Honda": ["Civic","City","Fit","HR-V","WR-V"],
+  "Nissan": ["Kicks","Versa","March","Sentra","Frontier"],
+  "Jeep": ["Renegade","Compass","Commander"],
+  "Peugeot": ["206","207","208","2008","307","308"],
+  "Citroën": ["C3","C4 Cactus","Aircross","Xsara Picasso"],
+  "Kia": ["Sportage","Cerato","Soul"],
+  "Mitsubishi": ["L200","ASX","Outlander","Pajero"],
+  "Chery": ["Tiggo 2","Tiggo 3X","Tiggo 5X","Tiggo 7","Arrizo 5"],
+  "BYD": ["Dolphin","Song Plus","Yuan Plus","Seal"],
+  "Mercedes-Benz": ["Classe A","Classe C","Classe E","Sprinter"],
+  "BMW": ["Série 1","Série 3","X1","X3","X5"],
+  "Audi": ["A3","A4","Q3","Q5"],
+};
+
+function initVehicleDatalists(){
+  const dlB = $("dlMarcas");
+  if(!dlB) return;
+  dlB.innerHTML = Object.keys(VEHICLE_DB).sort().map(b=>`<option value="${escapeHtml(b)}"></option>`).join("");
+  updateModelsForBrand();
+  const marca = $("vehicleMarca");
+  if(marca){
+    marca.addEventListener("input", ()=> updateModelsForBrand());
+  }
+}
+
+function updateModelsForBrand(){
+  const dlM = $("dlModelos");
+  const marca = norm($("vehicleMarca")?.value);
+  if(!dlM) return;
+  const models = VEHICLE_DB[marca] || [];
+  dlM.innerHTML = models.map(m=>`<option value="${escapeHtml(m)}"></option>`).join("");
+}
+
+// Busca por placa (automaticamente preenche se existir)
+function wirePlateAutofill(){
+  const placaEl = $("vehiclePlaca");
+  if(!placaEl) return;
+  let t=null;
+  placaEl.addEventListener("input", ()=>{
+    clearTimeout(t);
+    t=setTimeout(()=>{
+      const p = normPlaca(placaEl.value);
+      if(!p) return;
+      const found = state.vehicles.find(v=>v.placa===p && v.id!==editingVehicleId);
+      if(found){
+        $("vehicleCliente").value = found.cliente_id || "";
+        $("vehicleMarca").value = found.marca || "";
+        updateModelsForBrand();
+        $("vehicleModelo").value = found.modelo || "";
+        $("vehicleAno").value = found.ano || "";
+        $("vehicleKm").value = found.km_atual ?? "";
+        $("vehicleObs").value = found.observacoes || "";
+        toast("Placa já cadastrada — dados preenchidos.");
+      }
+    }, 250);
+  });
+}
+
+/* Caixa */
+let cashTxMode = "in"; // in/out
+function cashBalance(){
+  const txs = state.cash || [];
+  let bal=0;
+  for(const t of txs){
+    const sign = t.type === "out" ? -1 : 1;
+    bal += sign * Number(t.amount||0);
+  }
+  return bal;
+}
+function openCash(){
+  renderCash();
+  openModal("cash");
+}
+function renderCash(){
+  const pill = $("cashBalancePill");
+  if(pill) pill.textContent = `Saldo: ${money(cashBalance())}`;
+  const q = norm($("cashQ")?.value);
+  const list = $("cashList");
+  if(!list) return;
+  const txs = (state.cash||[]).slice().sort((a,b)=> (b.date||"").localeCompare(a.date||""));
+  const filtered = q ? txs.filter(t=> matchesQuery(t,q)) : txs;
+  if(filtered.length===0){
+    list.innerHTML = `<div class="muted">Nenhum movimento.</div>`;
+    return;
+  }
+  list.innerHTML = "";
+  for(const t of filtered){
+    const el = document.createElement("div");
+    el.className="item";
+    const sign = t.type==="out" ? "-" : "+";
+    el.innerHTML = `
+      <div>
+        <div class="title">${escapeHtml(t.desc||"(Sem descrição)")}</div>
+        <div class="sub">${escapeHtml(fmtDate(t.date))} • ${escapeHtml(labelPay(t.method))}</div>
+      </div>
+      <div class="badge ${t.type==="out"?"red":"ok"}">${sign} ${money(t.amount||0)}</div>
+    `;
+    el.onclick = ()=>{
+      if(!confirm("Excluir este movimento do caixa?")) return;
+      state.cash = (state.cash||[]).filter(x=>x.id!==t.id);
+      saveState();
+      if(session) cloudSync().catch(()=>{});
+    };
+    list.appendChild(el);
+  }
+}
+function labelPay(m){
+  const map = {pix:"Pix", dinheiro:"Dinheiro", debito:"Débito", credito:"Crédito", boleto:"Boleto", outro:"Outro"};
+  return map[m] || (m||"");
+}
+function openCashTx(mode){
+  cashTxMode = mode;
+  $("cashTxTitle").textContent = mode==="out" ? "Saída" : "Entrada";
+  $("cashTxDate").value = todayISO();
+  $("cashTxDesc").value = "";
+  $("cashTxMethod").value = "pix";
+  $("cashTxAmount").value = "";
+  openModal("cashTx");
+}
+function saveCashTx(){
+  const date = $("cashTxDate").value || todayISO();
+  const desc = norm($("cashTxDesc").value);
+  const method = $("cashTxMethod").value;
+  const amount = Number($("cashTxAmount").value||0);
+  if(!desc){ toast("Informe a descrição."); return; }
+  if(!amount || amount<=0){ toast("Informe o valor."); return; }
+  state.cash = state.cash || [];
+  state.cash.push({id:uuid(), type: cashTxMode, date, desc, method, amount, created_at:new Date().toISOString()});
+  saveState();
+  closeAllModals();
+  if(session) cloudSync().catch(()=>{});
+}
+
+/* Relatório */
+function monthKey(iso){ return (iso||"").slice(0,7); } // YYYY-MM
+function buildReportMonthOptions(){
+  const sel = $("reportMonth");
+  if(!sel) return;
+  const months = new Set();
+  for(const s of state.services||[]) months.add(monthKey(s.data_servico));
+  for(const t of state.cash||[]) months.add(monthKey(t.date));
+  const arr = Array.from(months).filter(Boolean).sort().reverse();
+  const cur = sel.value || arr[0] || monthKey(todayISO());
+  sel.innerHTML = arr.map(m=>`<option value="${m}">${m}</option>`).join("");
+  if(!arr.includes(cur) && arr.length) sel.value = arr[0];
+  else sel.value = cur;
+}
+function openReport(){
+  buildReportMonthOptions();
+  renderReport();
+  openModal("report");
+}
+function renderReport(){
+  const m = $("reportMonth")?.value || monthKey(todayISO());
+  const monthServices = (state.services||[]).filter(s=> monthKey(s.data_servico)===m);
+  const paidTotal = monthServices.filter(s=>s.paid).reduce((a,s)=>a+Number(s.total||0),0);
+  const openTotal = monthServices.filter(s=>!s.paid).reduce((a,s)=>a+Number(s.total||0),0);
+  const repPaid=$("repPaid"), repOpen=$("repOpen"), repCount=$("repCount");
+  if(repPaid) repPaid.textContent = money(paidTotal);
+  if(repOpen) repOpen.textContent = money(openTotal);
+  if(repCount) repCount.textContent = String(monthServices.length);
+
+  // breakdown por forma pagamento (somente pagos)
+  const by = {};
+  for(const s of monthServices.filter(s=>s.paid)){
+    const k = s.pay_method || "outro";
+    by[k] = (by[k]||0) + Number(s.total||0);
+  }
+  const txs = (state.cash||[]).filter(t=> monthKey(t.date)===m);
+  const cashIn = txs.filter(t=>t.type!=="out").reduce((a,t)=>a+Number(t.amount||0),0);
+  const cashOut = txs.filter(t=>t.type==="out").reduce((a,t)=>a+Number(t.amount||0),0);
+
+  const list = $("repBreakdown");
+  if(list){
+    const rows = Object.entries(by).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`
+      <div class="item">
+        <div><div class="title">${escapeHtml(labelPay(k))}</div><div class="sub">OS pagas</div></div>
+        <div class="badge ok">${money(v)}</div>
+      </div>
+    `).join("");
+    list.innerHTML = rows + `
+      <div class="item">
+        <div><div class="title">Caixa • Entradas</div><div class="sub">${escapeHtml(m)}</div></div>
+        <div class="badge ok">${money(cashIn)}</div>
+      </div>
+      <div class="item">
+        <div><div class="title">Caixa • Saídas</div><div class="sub">${escapeHtml(m)}</div></div>
+        <div class="badge red">- ${money(cashOut)}</div>
+      </div>
+    `;
+  }
+}
+function exportReportCSV(){
+  const m = $("reportMonth")?.value || monthKey(todayISO());
+  const monthServices = (state.services||[]).filter(s=> monthKey(s.data_servico)===m);
+  const header = ["data","os","cliente","placa","tipo","total","pago","forma_pagamento"];
+  const lines = [header.join(",")];
+  for(const s of monthServices){
+    const c = state.clients.find(x=>x.id===s.cliente_id);
+    const v = state.vehicles.find(x=>x.id===s.veiculo_id);
+    const row = [
+      s.data_servico||"",
+      s.os_numero||"",
+      (c?.nome||"").replaceAll('"','""'),
+      v?.placa||"",
+      s.tipo||"",
+      String(Number(s.total||0)).replace(".",","),
+      s.paid?"sim":"nao",
+      s.pay_method||""
+    ];
+    lines.push(row.map(x=>`"${String(x)}"`).join(","));
+  }
+  const blob = new Blob([lines.join("\n")], {type:"text/csv;charset=utf-8"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `relatorio-${m}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+/* Avisos troca de óleo */
+function openOilAlerts(){
+  renderOilAlerts();
+  openModal("oilAlerts");
+}
+function renderOilAlerts(){
+  const list = $("oilAlertsList");
+  if(!list) return;
+  const items = (state.services||[])
+    .filter(s=>s.tipo==="troca_oleo")
+    .map(s=>({s, badge: dueBadgeForOil(s)}))
+    .filter(x=>x.badge && (x.badge.cls==="red" || x.badge.cls==="warn"))
+    .sort((a,b)=> (a.s.oil_next_date||"").localeCompare(b.s.oil_next_date||""));
+  if(items.length===0){
+    list.innerHTML = `<div class="muted">Nenhum aviso no momento.</div>`;
+    return;
+  }
+  list.innerHTML="";
+  for(const {s,badge} of items){
+    const v = state.vehicles.find(v=>v.id===s.veiculo_id);
+    const c = state.clients.find(c=>c.id===s.cliente_id);
+    const el = document.createElement("div");
+    el.className="item";
+    const nextTxt = `${s.oil_next_date? fmtDate(s.oil_next_date):"-"}${s.oil_next_km?(" ou "+s.oil_next_km+" km"):""}`;
+    el.innerHTML = `
+      <div>
+        <div class="title">${escapeHtml((c?.nome||""))} • ${escapeHtml((v?.placa||""))}</div>
+        <div class="sub">Status: <b>${escapeHtml(badge.txt)}</b> • Próxima: ${escapeHtml(nextTxt)}</div>
+      </div>
+      <div class="row" style="gap:8px">
+        <div class="badge ${badge.cls}">${escapeHtml(badge.txt)}</div>
+        <button class="btn" type="button">WhatsApp</button>
+      </div>
+    `;
+    el.querySelector("button").onclick = ()=>{
+      if(!c?.whatsapp){ toast("Cliente sem WhatsApp cadastrado."); return; }
+      const msg = `Olá ${c.nome}! 👋\n\nPassando pra lembrar da troca de óleo do veículo ${v?.placa||""} (${v?.modelo||""}).\nPróxima troca: ${nextTxt}.\n\nSe quiser, já podemos agendar.\nLopes Serviços Mecânicos`;
+      window.open(`https://wa.me/55${c.whatsapp}?text=${encodeURIComponent(msg)}`,"_blank");
+    };
+    list.appendChild(el);
+  }
+}
+
+/* Lembrar e-mail/senha do Supabase (opcional) */
+function initRememberCloudCreds(){
+  const emailEl = $("cloudEmail");
+  const passEl = $("cloudPass");
+  const remE = $("rememberEmail");
+  const remP = $("rememberPass");
+  if(emailEl){
+    const savedEmail = localStorage.getItem(APP.rememberEmailKey) || "";
+    if(savedEmail) emailEl.value = savedEmail;
+  }
+  if(passEl){
+    const savedPass = localStorage.getItem(APP.rememberPassKey) || "";
+    if(savedPass) passEl.value = savedPass;
+  }
+  if(remE){
+    remE.checked = true;
+    remE.addEventListener("change", ()=>{
+      if(!remE.checked) localStorage.removeItem(APP.rememberEmailKey);
+    });
+  }
+  if(remP){
+    remP.checked = !!localStorage.getItem(APP.rememberPassKey);
+    remP.addEventListener("change", ()=>{
+      if(!remP.checked) localStorage.removeItem(APP.rememberPassKey);
+    });
+  }
+
+  // ao clicar Entrar, salvar se marcado
+  const btn = $("btnCloudLogin");
+  if(btn){
+    btn.addEventListener("click", ()=>{
+      if(remE?.checked) localStorage.setItem(APP.rememberEmailKey, (emailEl?.value||"").trim());
+      if(remP?.checked) localStorage.setItem(APP.rememberPassKey, (passEl?.value||""));
+    }, {capture:true});
+  }
+}
+
+/* Auto Sync */
+let syncTimer = null;
+function startAutoSync(){
+  if(syncTimer) clearInterval(syncTimer);
+  syncTimer = setInterval(()=>{
+    if(session && navigator.onLine){
+      cloudSync().catch(()=>{});
+    }
+  }, 120000); // 2 min
+}
+
+/* Wire extra UI buttons */
+function wireExtraButtons(){
+  $("btnCash")?.addEventListener("click", openCash);
+  $("btnCashIn")?.addEventListener("click", ()=>openCashTx("in"));
+  $("btnCashOut")?.addEventListener("click", ()=>openCashTx("out"));
+  $("cashTxSave")?.addEventListener("click", saveCashTx);
+  $("cashQ")?.addEventListener("input", renderCash);
+  $("btnReport")?.addEventListener("click", openReport);
+  $("reportMonth")?.addEventListener("change", renderReport);
+  $("btnReportExport")?.addEventListener("click", exportReportCSV);
+  $("btnOilAlerts")?.addEventListener("click", openOilAlerts);
+
+  // payment listeners
+  $("osTotal")?.addEventListener("input", updatePayInfo);
+  $("osPayAmount")?.addEventListener("input", updatePayInfo);
+  $("osPayChange")?.addEventListener("input", updatePayInfo);
+}
+
+
 
 window.addEventListener("load", ()=>{
-
-  // garante que nenhum modal fique aberto após reload
-  if (typeof closeAllModals === "function") closeAllModals();
-
-  // ✅ binding defensivo (garante que botões críticos funcionem mesmo se algum handler falhar)
-  const _btnNewOS = document.getElementById("btnNewOS");
-  if (_btnNewOS){
-    _btnNewOS.addEventListener("click", (e)=>{
-      e.preventDefault();
-      e.stopPropagation();
-      try{ openService(null); }catch(err){ console.error(err); }
-    }, { passive:false });
+  // register service worker (PWA)
+  if("serviceWorker" in navigator){
+    navigator.serviceWorker.register("./sw.js").catch(()=>{});
   }
 
-
-  // service worker disabled for debugging Supabase connection
-if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.getRegistrations()
-    .then((regs)=>Promise.all(regs.map(r=>r.unregister())))
-    .catch(()=>{});
-  if (window.caches && caches.keys) {
-    caches.keys().then(keys=>Promise.all(keys.map(k=>caches.delete(k)))).catch(()=>{});
-  }
-}
-// pin gate (simple)
+  // PIN gate (simple)
   const pin = localStorage.getItem(APP.pinKey) || "1234";
   setTimeout(()=>{
     const entered = prompt("Digite o PIN do sistema (padrão: 1234):");
@@ -1113,6 +1214,12 @@ if ("serviceWorker" in navigator) {
     }
   }, 150);
 
+  initVehicleDatalists();
+  wirePlateAutofill();
+  wireExtraButtons();
+  initRememberCloudCreds();
+
   renderAll();
-  initAuthState();
+  initAuthState().then(()=> startAutoSync()).catch(()=>{});
 });
+

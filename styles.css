@@ -193,3 +193,9 @@ body{
 @supports not (height: 100dvh){
   .modal-card{max-height: calc(100vh - 24px);} 
 }
+
+
+/* Fix: ensure hidden works across Android/PWA */
+[hidden]{ display:none !important; }
+
+.big{ font-size:22px; font-weight:800; }

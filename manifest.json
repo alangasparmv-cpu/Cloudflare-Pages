@@ -1,7 +1,7 @@
 {
   "name": "Lopes Serviços Mecânicos",
   "short_name": "Lopes Mecânica",
-  "start_url": ".",
+  "start_url": "./?v=4.0",
   "display": "standalone",
   "background_color": "#0b0b0d",
   "theme_color": "#d50000",
@@ -16,5 +16,14 @@
       "sizes": "512x512",
       "type": "image/png"
     }
+  ],
+  "scope": "./",
+  "id": "./?v=4.0",
+  "description": "Sistema simples de OS, clientes, veículos, troca de óleo, caixa e sincronização em nuvem.",
+  "lang": "pt-BR",
+  "display_override": [
+    "standalone",
+    "minimal-ui",
+    "browser"
   ]
 }

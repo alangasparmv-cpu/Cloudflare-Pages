@@ -1,36 +1,40 @@
-const CACHE = "lopes-sm-cache-v3.1.1";
+const CACHE = "lopes-sm-cache-v4.0";
 const ASSETS = [
   "./",
   "./index.html",
-  "./styles.css?v=3.1.1",
-  "./app.js?v=3.1.1",
-  "./manifest.json?v=3.1.1",
+  "./styles.css?v=4.0",
+  "./app.js?v=4.0",
+  "./manifest.json?v=4.0",
+  "./sw.js",
+  "./assets/logo.png",
   "./assets/icon-192.png",
   "./assets/icon-512.png"
 ];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE).then((cache) => cache.addAll(ASSETS)).then(() => self.skipWaiting())
+    caches.open(CACHE)
+      .then((cache) => cache.addAll(ASSETS))
+      .then(() => self.skipWaiting())
   );
 });
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
-    caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim())
+    caches.keys()
+      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then(() => self.clients.claim())
   );
 });
 
-function isAppAsset(url) {
-  // Always update core app assets from network first
+function isCore(url){
   return (
     url.origin === self.location.origin &&
     (url.pathname.endsWith("/app.js") ||
-      url.pathname.endsWith("/sw.js") ||
-      url.pathname.endsWith("/styles.css") ||
-      url.pathname.endsWith("/manifest.json") ||
-      url.pathname === "/" ||
-      url.pathname.endsWith("/index.html"))
+     url.pathname.endsWith("/styles.css") ||
+     url.pathname.endsWith("/index.html") ||
+     url.pathname.endsWith("/manifest.json") ||
+     url.pathname.endsWith("/sw.js"))
   );
 }
 
@@ -40,31 +44,26 @@ self.addEventListener("fetch", (event) => {
 
   const url = new URL(req.url);
 
-  // Network-first for app shell assets (prevents old cached JS causing Supabase URL bugs)
-  if (isAppAsset(url)) {
+  // network-first for core files (so updates chegam rápido)
+  if (isCore(url)) {
     event.respondWith(
       fetch(req)
         .then((res) => {
           const copy = res.clone();
-          caches.open(CACHE).then((cache) => cache.put(req, copy));
+          caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
           return res;
         })
-        .catch(() => caches.match(req).then((c) => c || caches.match("./index.html")))
+        .catch(() => caches.match(req))
     );
     return;
   }
 
-  // Cache-first for other same-origin assets
-  if (url.origin === self.location.origin) {
-    event.respondWith(
-      caches.match(req).then((cached) =>
-        cached ||
-        fetch(req).then((res) => {
-          const copy = res.clone();
-          caches.open(CACHE).then((cache) => cache.put(req, copy));
-          return res;
-        })
-      )
-    );
-  }
+  // cache-first for everything else
+  event.respondWith(
+    caches.match(req).then((cached) => cached || fetch(req).then((res) => {
+      const copy = res.clone();
+      caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
+      return res;
+    }))
+  );
 });

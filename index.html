@@ -4,12 +4,12 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="theme-color" content="#d50000" />
-  <link rel="manifest" href="manifest.json?v=3.1.1" />
+  <link rel="manifest" href="manifest.json?v=4.0" />
   <link rel="icon" href="assets/icon-192.png" />
   <title>Lopes Serviços Mecânicos</title>
-  <link rel="stylesheet" href="styles.css?v=3.1.1" />
+  <link rel="stylesheet" href="styles.css?v=4.0" />
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script defer src="app.js?v=3.1.1"></script>
+  <script defer src="app.js?v=4.0"></script>
 </head>
 <body>
   <header class="topbar">
@@ -59,7 +59,9 @@
             <div class="muted">Troca de óleo calcula por data e km (o que vencer primeiro).</div>
           </div>
           <div class="spacer"></div>
-          <button class="btn" id="btnCash">💰 Caixa</button>
+          <button class="btn" id="btnOilAlerts" title="Trocas de óleo para avisar">🔔 Avisos</button>
+          <button class="btn" id="btnReport" title="Relatório / Faturamento">📊 Relatório</button>
+          <button class="btn" id="btnCash" title="Caixa">💰 Caixa</button>
         </div>
         <div id="servicesList" class="list"></div>
       </section>
@@ -103,6 +105,7 @@
         <select id="vehicleCliente" class="input"></select>
         <label>Placa</label>
         <input id="vehiclePlaca" class="input" placeholder="ABC1D23" />
+
         <label>Marca</label>
         <input id="vehicleMarca" class="input" placeholder="ex: Volkswagen" list="dlMarcas" />
         <datalist id="dlMarcas"></datalist>
@@ -282,6 +285,18 @@
             <input id="cloudPass" class="input" type="password" placeholder="Senha" />
             <button id="btnCloudLogin" class="btn primary">Entrar</button>
           </div>
+          <div class="row" style="gap:10px; margin-top:8px">
+            <label class="pill" style="display:inline-flex; gap:8px; align-items:center;">
+              <input id="rememberEmail" type="checkbox" checked />
+              Lembrar e-mail
+            </label>
+            <label class="pill" style="display:inline-flex; gap:8px; align-items:center;">
+              <input id="rememberPass" type="checkbox" />
+              Lembrar senha
+            </label>
+            <div class="spacer"></div>
+            <div class="muted" style="max-width:420px">⚠️ Lembrar senha salva no aparelho (não recomendado em celular compartilhado).</div>
+          </div>
           <div class="row">
             <button id="btnCloudLogout" class="btn">Sair</button>
             <button id="btnCloudSync" class="btn">Sincronizar agora</button>
@@ -308,6 +323,8 @@
       <button type="button" class="btn" data-close>Fechar</button>
     </div>
   </div>
+
+
   <!-- CAIXA -->
   <div class="modal-card" id="modalCash" hidden>
     <div class="modal-h">
@@ -364,6 +381,54 @@
     </div>
   </div>
 
+  <!-- RELATÓRIO -->
+  <div class="modal-card" id="modalReport" hidden>
+    <div class="modal-h">
+      <h3>Relatório / Faturamento</h3>
+      <button class="btn ghost" data-close type="button">✕</button>
+    </div>
+    <div class="modal-b">
+      <div class="row" style="gap:10px; margin-bottom:10px">
+        <select id="reportMonth" class="input" style="max-width:220px"></select>
+        <div class="spacer"></div>
+        <button class="btn" id="btnReportExport" type="button">Exportar CSV</button>
+      </div>
+      <div class="grid" style="grid-template-columns:repeat(3, minmax(0,1fr)); gap:10px;">
+        <div class="card" style="padding:12px;">
+          <div class="muted">Faturamento (Pago)</div>
+          <div class="big" id="repPaid">R$ 0,00</div>
+        </div>
+        <div class="card" style="padding:12px;">
+          <div class="muted">Aberto (Não pago)</div>
+          <div class="big" id="repOpen">R$ 0,00</div>
+        </div>
+        <div class="card" style="padding:12px;">
+          <div class="muted">OS no mês</div>
+          <div class="big" id="repCount">0</div>
+        </div>
+      </div>
+      <div class="muted" style="margin-top:10px">Dica: marque “Pago” na OS para entrar no faturamento.</div>
+      <div id="repBreakdown" class="list" style="margin-top:10px"></div>
+    </div>
+    <div class="modal-f">
+      <button class="btn" data-close type="button">Fechar</button>
+    </div>
+  </div>
+
+  <!-- AVISOS TROCA DE ÓLEO -->
+  <div class="modal-card" id="modalOilAlerts" hidden>
+    <div class="modal-h">
+      <h3>Avisos de troca de óleo</h3>
+      <button class="btn ghost" data-close type="button">✕</button>
+    </div>
+    <div class="modal-b">
+      <div class="muted">Clique em “WhatsApp” para avisar o cliente.</div>
+      <div id="oilAlertsList" class="list" style="margin-top:10px"></div>
+    </div>
+    <div class="modal-f">
+      <button class="btn" data-close type="button">Fechar</button>
+    </div>
+  </div>
 
   <!-- PRINT TEMPLATE -->
   <div id="printArea" class="print-area" hidden></div>
